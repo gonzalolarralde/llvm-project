@@ -29,6 +29,7 @@
 #include "lldb/Core/Progress.h"
 #include "lldb/Core/Section.h"
 #include "lldb/DataFormatters/StringPrinter.h"
+#include "lldb/Expression/DiagnosticManager.h"
 #include "lldb/Host/OptionParser.h"
 #include "lldb/Host/SafeMachO.h"
 #include "lldb/Interpreter/CommandInterpreter.h"
@@ -41,12 +42,14 @@
 #include "lldb/Symbol/VariableList.h"
 #include "lldb/Target/Process.h"
 #include "lldb/Target/RegisterContext.h"
+#include "lldb/Target/ThreadPlanCallFunction.h"
 #include "lldb/Target/UnwindLLDB.h"
 #include "lldb/Utility/ConstString.h"
 #include "lldb/Utility/ErrorMessages.h"
 #include "lldb/Utility/LLDBLog.h"
 #include "lldb/Utility/Log.h"
 #include "lldb/Utility/OptionParsing.h"
+#include "lldb/Utility/Policy.h"
 #include "lldb/Utility/Status.h"
 #include "lldb/Utility/StreamString.h"
 #include "lldb/Utility/StructuredData.h"
@@ -227,6 +230,32 @@ ModuleSP SwiftLanguageRuntime::FindConcurrencyModule(Process &process) {
 static constexpr uint32_t g_concurrency_version_mask = 0x00FFFFFF;
 static constexpr uint32_t g_concurrency_storage_kind_shift = 24;
 static constexpr uint8_t g_concurrency_storage_kind_deferred_mask = 0x80;
+
+static llvm::Expected<addr_t> FindUniqueSymbolLoadAddress(Process &process,
+                                                          StringRef name) {
+  SymbolContextList contexts;
+  process.GetTarget().GetImages().FindSymbolsWithNameAndType(
+      ConstString(name), eSymbolTypeAny, contexts);
+
+  std::optional<addr_t> result;
+  for (size_t idx = 0; idx < contexts.GetSize(); ++idx) {
+    SymbolContext context;
+    if (!contexts.GetContextAtIndex(idx, context) || !context.symbol)
+      continue;
+    addr_t address =
+        context.symbol->GetAddress().GetLoadAddress(&process.GetTarget());
+    if (address == LLDB_INVALID_ADDRESS)
+      continue;
+    if (result && *result != address)
+      return llvm::createStringError("multiple definitions of %s",
+                                     name.str().c_str());
+    result = address;
+  }
+
+  if (!result)
+    return llvm::createStringError("could not find %s", name.str().c_str());
+  return *result;
+}
 
 static std::optional<uint32_t>
 FindConcurrencyVersionWord(Process &process, Module &concurrency_module) {
@@ -3217,6 +3246,12 @@ private:
       task_addr = *maybe_task_addr;
     }
 
+    if (task_addr == 0) {
+      result.AppendMessage("No Swift task (null task pointer).");
+      result.SetStatus(eReturnStatusSuccessFinishResult);
+      return;
+    }
+
     auto ts_or_err = m_exe_ctx.GetTargetRef().GetScratchTypeSystemForLanguage(
         eLanguageTypeSwift);
     if (auto error = ts_or_err.takeError()) {
@@ -3861,6 +3896,13 @@ static std::optional<addr_t> ReadPointer(Process &process,
 }
 
 namespace {
+/// All lookup strategies operate on the same platform context. A synthetic
+/// Swift task thread is a presentation of a task, not context-local storage.
+static Thread &GetPlatformExecutionContext(Thread &thread) {
+  auto backing_thread = thread.GetBackingThread();
+  return backing_thread ? *backing_thread : thread;
+}
+
 struct NoTaskFinder : TaskFinder {
   llvm::SmallVector<std::optional<lldb::addr_t>>
   GetTaskAddrForThread(llvm::ArrayRef<Thread *> threads) override {
@@ -3884,6 +3926,23 @@ protected:
   virtual llvm::Expected<lldb::addr_t>
   ComputeTaskAddrLocation(Thread &real_thread) = 0;
 
+  /// Expensive or stateful location computations can opt out of the
+  /// assertion-build cache consistency check.
+  virtual bool ShouldValidateCachedLocation() const { return true; }
+
+  /// Returns the lookup key; cache entries separately validate context
+  /// lifetime.
+  virtual uint64_t CacheKey(Thread &real_thread) const {
+    return real_thread.GetID();
+  }
+
+  virtual std::optional<Thread::ExecutionContextIndex>
+  CacheIdentity(Thread &real_thread) const {
+    return std::nullopt;
+  }
+
+  virtual bool RequiresCacheIdentity() const { return false; }
+
 private:
   /// For each thread in `threads`, return the location of its task
   /// pointer, if it exists.
@@ -3895,7 +3954,12 @@ private:
   std::optional<lldb::addr_t> RetryRead(Thread &thread,
                                         lldb::addr_t task_addr_location);
 
-  llvm::DenseMap<uint64_t, lldb::addr_t> m_tid_to_task_addr_location;
+  struct CachedLocation {
+    lldb::ThreadWP context;
+    lldb::addr_t address;
+    std::optional<Thread::ExecutionContextIndex> identity;
+  };
+  llvm::DenseMap<uint64_t, CachedLocation> m_task_addr_locations;
 };
 
 llvm::SmallVector<std::optional<lldb::addr_t>>
@@ -3904,18 +3968,27 @@ CachingTaskFinder::GetTaskAddrLocations(llvm::ArrayRef<Thread *> threads) {
   addr_locations.reserve(threads.size());
 
   for (auto [idx, thread] : llvm::enumerate(threads)) {
-    Thread &real_thread =
-        thread->GetBackingThread() ? *thread->GetBackingThread() : *thread;
+    Thread &real_thread = GetPlatformExecutionContext(*thread);
 
-    auto it = m_tid_to_task_addr_location.find(real_thread.GetID());
-    if (it != m_tid_to_task_addr_location.end()) {
-      addr_locations.push_back(it->second);
+    auto it = m_task_addr_locations.find(CacheKey(real_thread));
+    // Numeric identifiers may be reused after a platform context exits.
+    if (it != m_task_addr_locations.end() &&
+        (it->second.context.lock().get() != &real_thread ||
+         (RequiresCacheIdentity() && !it->second.identity) ||
+         it->second.identity != CacheIdentity(real_thread))) {
+      m_task_addr_locations.erase(it);
+      it = m_task_addr_locations.end();
+    }
+    if (it != m_task_addr_locations.end()) {
+      addr_locations.push_back(it->second.address);
 #ifndef NDEBUG
       // In assert builds, check that caching did not produce incorrect results.
-      llvm::Expected<lldb::addr_t> task_addr_location =
-          ComputeTaskAddrLocation(real_thread);
-      assert(task_addr_location);
-      assert(it->second == *task_addr_location);
+      if (ShouldValidateCachedLocation()) {
+        llvm::Expected<lldb::addr_t> task_addr_location =
+            ComputeTaskAddrLocation(real_thread);
+        assert(task_addr_location);
+        assert(it->second.address == *task_addr_location);
+      }
 #endif
       continue;
     }
@@ -3932,12 +4005,11 @@ CachingTaskFinder::GetTaskAddrLocations(llvm::ArrayRef<Thread *> threads) {
 
 std::optional<addr_t> CachingTaskFinder::RetryRead(Thread &thread,
                                                    addr_t task_addr_location) {
-  Thread &real_thread =
-      thread.GetBackingThread() ? *thread.GetBackingThread() : thread;
-  user_id_t tid = real_thread.GetID();
+  Thread &real_thread = GetPlatformExecutionContext(thread);
+  uint64_t cache_key = CacheKey(real_thread);
 
   // For unsuccessful reads whose address was not cached, don't try again.
-  if (!m_tid_to_task_addr_location.erase(tid))
+  if (!m_task_addr_locations.erase(cache_key))
     return std::nullopt;
 
   LLDB_LOG(GetLog(LLDBLog::OS), "CachingTaskFinder: evicted task location "
@@ -3955,13 +4027,14 @@ std::optional<addr_t> CachingTaskFinder::RetryRead(Thread &thread,
   std::optional<addr_t> read_retry_result =
       ReadPointer(*thread.GetProcess(), *task_addr_loc);
   if (read_retry_result)
-    m_tid_to_task_addr_location[tid] = *task_addr_loc;
+    m_task_addr_locations[cache_key] = {real_thread.shared_from_this(),
+                                        *task_addr_loc,
+                                        CacheIdentity(real_thread)};
   return read_retry_result;
 }
 
 llvm::SmallVector<std::optional<addr_t>>
-CachingTaskFinder::GetTaskAddrForThread(
-    llvm::ArrayRef<Thread *> threads) {
+CachingTaskFinder::GetTaskAddrForThread(llvm::ArrayRef<Thread *> threads) {
   if (threads.empty())
     return {};
 
@@ -3977,9 +4050,10 @@ CachingTaskFinder::GetTaskAddrForThread(
       continue;
     // If the read was successful, cache the address.
     if (mem_read_results[idx]) {
-      Thread &real_thread =
-          thread->GetBackingThread() ? *thread->GetBackingThread() : *thread;
-      m_tid_to_task_addr_location[real_thread.GetID()] = *addr_locations[idx];
+      Thread &real_thread = GetPlatformExecutionContext(*thread);
+      m_task_addr_locations[CacheKey(real_thread)] = {
+          real_thread.shared_from_this(), *addr_locations[idx],
+          CacheIdentity(real_thread)};
       continue;
     }
     mem_read_results[idx] = RetryRead(*thread, *addr_locations[idx]);
@@ -4157,6 +4231,301 @@ struct GlobalTLSArrayTaskFinder : SingleLocationTaskFinder {
       : SingleLocationTaskFinder(
             FindTaskTLSSlotAddr(process).value_or(LLDB_INVALID_ADDRESS)) {}
 };
+
+static llvm::Expected<addr_t>
+CallPointerReturningFunction(Thread &real_thread, StringRef function_name,
+                             std::optional<Address> &function_address) {
+  Process &process = *real_thread.GetProcess();
+  const auto context = real_thread.GetExecutionContextIndex();
+  if (!context)
+    return llvm::createStringError(
+        "execution context has no typed platform index");
+  const auto pointer_size = process.GetAddressByteSize();
+  if ((pointer_size != 4 && pointer_size != 8) ||
+      (pointer_size == 4 && context->index > UINT32_MAX))
+    return llvm::createStringError("execution-context index exceeds uintptr_t");
+  if (!process.GetTarget().GetSwiftTaskAllowInferiorCalls())
+    return llvm::createStringError("Swift task inferior calls are disabled");
+  if (process.GetModID().IsRunningExpression())
+    return llvm::createStringError("recursive Swift task inferior call");
+  if (!real_thread.SafeToCallFunctions())
+    return llvm::createStringError("thread is not safe for inferior calls");
+
+  auto registers = real_thread.GetRegisterContext();
+  if (!registers)
+    return llvm::createStringError("thread has no register context");
+  if (const auto *xpsr = registers->GetRegisterInfoByName("xpsr")) {
+    auto value = registers->ReadRegisterAsUnsigned(xpsr, UINT64_MAX);
+    if (value == UINT64_MAX || (value & 0x1ff))
+      return llvm::createStringError(
+          "Swift task inferior calls are unavailable in Cortex-M Handler mode");
+  }
+  if (!function_address) {
+    llvm::Expected<addr_t> load_address =
+        FindUniqueSymbolLoadAddress(process, function_name);
+    if (!load_address)
+      return load_address.takeError();
+
+    Address resolved_address;
+    if (!process.GetTarget().ResolveLoadAddress(*load_address,
+                                                resolved_address))
+      return llvm::createStringError("could not resolve %s",
+                                     function_name.str().c_str());
+    function_address = resolved_address;
+  }
+
+  EvaluateExpressionOptions options;
+  options.SetUnwindOnError(true);
+  options.SetIgnoreBreakpoints(true);
+  options.SetStopOthers(true);
+  options.SetTimeout(process.GetUtilityExpressionTimeout());
+  options.SetTryAllThreads(false);
+
+  auto type_system =
+      process.GetTarget().GetScratchTypeSystemForLanguage(eLanguageTypeC);
+  if (!type_system)
+    return type_system.takeError();
+  CompilerType void_pointer =
+      (*type_system)->GetBasicTypeFromAST(eBasicTypeVoid).GetPointerType();
+
+  const addr_t arguments[] = {context->index, uint32_t(context->kind)};
+  LLDB_LOG(GetLog(LLDBLog::OS),
+           "Calling {0} for execution-context index {1}, kind {2}",
+           function_name, context->index, uint32_t(context->kind));
+  ThreadPlanSP call_plan(new ThreadPlanCallFunction(
+      real_thread, *function_address, void_pointer, arguments, options));
+  StreamString validation_error;
+  if (!call_plan || !call_plan->ValidatePlan(&validation_error))
+    return llvm::createStringError("could not prepare %s: %s",
+                                   function_name.str().c_str(),
+                                   validation_error.GetString().str().c_str());
+
+  ExecutionContext execution_context;
+  real_thread.CalculateExecutionContext(execution_context);
+  DiagnosticManager diagnostics;
+  process.SetRunningUserExpression(true);
+  auto reset_running_user_expression =
+      llvm::make_scope_exit([&]() { process.SetRunningUserExpression(false); });
+  PolicyStack::Guard expression_policy =
+      PolicyStack::Get().PushPublicStateRunningExpression();
+  ExpressionResults call_result =
+      process.RunThreadPlan(execution_context, call_plan, options, diagnostics);
+  if (call_result != eExpressionCompleted)
+    return llvm::createStringError("%s failed: %s", function_name.str().c_str(),
+                                   diagnostics.GetString().c_str());
+  ValueObjectSP result = call_plan->GetReturnValueObject();
+  if (!result)
+    return llvm::createStringError("%s returned no value",
+                                   function_name.str().c_str());
+  const auto value = result->GetValueAsUnsigned(LLDB_INVALID_ADDRESS);
+  const auto rejected = pointer_size == 4 ? UINT32_MAX : UINT64_MAX;
+  if (value == rejected || value == LLDB_INVALID_ADDRESS)
+    return llvm::createStringErrorV(
+        "{0} rejected execution-context index {1}, kind {2}", function_name,
+        context->index, uint32_t(context->kind));
+  return value;
+}
+
+/// Finds tasks by calling `_swift_concurrency_debug_getCurrentTask()` on each
+/// stopped thread.
+/// This requires explicit user opt-in because it resumes execution.
+struct PlatformFunctionTaskFinder : TaskFinder {
+  llvm::SmallVector<std::optional<lldb::addr_t>>
+  GetTaskAddrForThread(llvm::ArrayRef<Thread *> threads) override;
+
+private:
+  llvm::Expected<lldb::addr_t> GetTaskAddr(Thread &real_thread);
+
+  std::optional<Address> m_function_address;
+};
+
+llvm::Expected<addr_t>
+PlatformFunctionTaskFinder::GetTaskAddr(Thread &real_thread) {
+  return CallPointerReturningFunction(real_thread,
+                                      "_swift_concurrency_debug_getCurrentTask",
+                                      m_function_address);
+}
+
+llvm::SmallVector<std::optional<addr_t>>
+PlatformFunctionTaskFinder::GetTaskAddrForThread(
+    llvm::ArrayRef<Thread *> threads) {
+  llvm::SmallVector<std::optional<addr_t>> results;
+  results.reserve(threads.size());
+  for (Thread *thread : threads) {
+    Thread &real_thread = GetPlatformExecutionContext(*thread);
+    llvm::Expected<addr_t> task = GetTaskAddr(real_thread);
+    if (!task) {
+      LLDB_LOG_ERROR(GetLog(LLDBLog::OS), task.takeError(),
+                     "failed to call the current-task wrapper: {0}");
+      results.push_back(std::nullopt);
+      continue;
+    }
+    results.push_back(*task == LLDB_INVALID_ADDRESS
+                          ? std::nullopt
+                          : std::optional<addr_t>(*task));
+  }
+  return results;
+}
+
+/// Calls the platform once per context to discover the stable address of its
+/// current-task pointer, then uses cached memory reads on subsequent stops.
+struct PlatformAddressFunctionTaskFinder : CachingTaskFinder {
+  llvm::Expected<lldb::addr_t>
+  ComputeTaskAddrLocation(Thread &real_thread) override {
+    llvm::Expected<addr_t> address = CallPointerReturningFunction(
+        real_thread, "_swift_concurrency_debug_getCurrentTaskAddress",
+        m_function_address);
+    if (!address)
+      return address.takeError();
+    if (*address == 0 || *address == LLDB_INVALID_ADDRESS ||
+        *address % real_thread.GetProcess()->GetAddressByteSize())
+      return llvm::createStringError(
+          "_swift_concurrency_debug_getCurrentTaskAddress returned an "
+          "invalid address");
+    return *address;
+  }
+
+  bool ShouldValidateCachedLocation() const override { return false; }
+
+  std::optional<Thread::ExecutionContextIndex>
+  CacheIdentity(Thread &real_thread) const override {
+    return real_thread.GetExecutionContextIndex();
+  }
+
+  bool RequiresCacheIdentity() const override { return true; }
+
+  uint64_t CacheKey(Thread &real_thread) const override {
+    // Use the debugger's context identifier, with object-lifetime validation
+    // in the cache so this does not depend on a backend's ID reuse policy.
+    return real_thread.GetIndexID();
+  }
+
+private:
+  std::optional<Address> m_function_address;
+};
+
+/// Finds tasks using the platform context's typed index as a table offset.
+/// Helpers receive the same pair but decide its meaning themselves.
+struct PlatformIndexedTaskFinder : TaskFinder {
+  llvm::SmallVector<std::optional<addr_t>>
+  GetTaskAddrForThread(llvm::ArrayRef<Thread *> threads) override;
+
+private:
+  llvm::Expected<lldb::addr_t> ComputeTaskAddrLocation(Thread &real_thread);
+
+  llvm::Error ResolveTable(Process &process);
+
+  std::optional<addr_t> m_slots;
+  uint64_t m_slot_count = 0;
+  uint64_t m_slot_stride = 0;
+};
+
+llvm::Error PlatformIndexedTaskFinder::ResolveTable(Process &process) {
+  if (m_slots)
+    return llvm::Error::success();
+
+  const auto pointer_size = process.GetAddressByteSize();
+  if (pointer_size != 4 && pointer_size != 8)
+    return llvm::createStringError("unsupported context-table pointer size");
+  auto read_word = [&](StringRef name) -> llvm::Expected<uint64_t> {
+    auto address = FindUniqueSymbolLoadAddress(process, name);
+    if (!address)
+      return address.takeError();
+    Status status;
+    auto value = process.ReadUnsignedIntegerFromMemory(*address, pointer_size,
+                                                       0, status);
+    if (status.Fail())
+      return status.takeError();
+    return value;
+  };
+  auto slots = read_word("_swift_concurrency_debug_current_task_slots");
+  if (!slots)
+    return slots.takeError();
+  auto count = read_word("_swift_concurrency_debug_current_task_slot_count");
+  if (!count)
+    return count.takeError();
+  auto stride = read_word("_swift_concurrency_debug_current_task_slot_stride");
+  if (!stride)
+    return stride.takeError();
+
+  const uint64_t max_address = pointer_size == 4 ? UINT32_MAX : UINT64_MAX;
+  if (*slots == 0 || *slots % pointer_size || *count == 0 ||
+      *stride < pointer_size || *stride % pointer_size ||
+      *slots > max_address - (pointer_size - 1) ||
+      *count - 1 > (max_address - *slots - (pointer_size - 1)) / *stride)
+    return llvm::createStringError(
+        "invalid context-indexed task table metadata");
+
+  m_slots = *slots;
+  m_slot_count = *count;
+  m_slot_stride = *stride;
+  return llvm::Error::success();
+}
+
+llvm::Expected<addr_t>
+PlatformIndexedTaskFinder::ComputeTaskAddrLocation(Thread &real_thread) {
+  Process &process = *real_thread.GetProcess();
+  auto context = real_thread.GetExecutionContextIndex();
+  if (!context)
+    return llvm::createStringError(
+        "execution context has no typed platform index");
+
+  // The kind is a separate symbol so a mismatch can be rejected before even
+  // resolving the table base, count, or stride.
+  auto kind_address = FindUniqueSymbolLoadAddress(
+      process, "_swift_concurrency_debug_current_task_context_kind");
+  if (!kind_address)
+    return kind_address.takeError();
+  Status status;
+  auto expected_kind =
+      process.ReadUnsignedIntegerFromMemory(*kind_address, 4, 0, status);
+  if (status.Fail())
+    return status.takeError();
+  using Kind = Thread::ExecutionContextIndex::Kind;
+  if (expected_kind != uint32_t(Kind::SoftwareThread) &&
+      expected_kind != uint32_t(Kind::HardwareThread))
+    return llvm::createStringErrorV(
+        "unsupported table execution-context kind {0}; table not accessed",
+        expected_kind);
+  if (expected_kind != uint32_t(context->kind))
+    return llvm::createStringErrorV(
+        "execution-context kind mismatch: table expects {0}, selected context "
+        "has {1} (index {2}); table not accessed",
+        expected_kind, uint32_t(context->kind), context->index);
+  if (llvm::Error error = ResolveTable(process))
+    return std::move(error);
+
+  if (context->index >= m_slot_count)
+    return llvm::createStringErrorV(
+        "execution-context index {0} is outside the current-task table",
+        context->index);
+  const addr_t slot = *m_slots + context->index * m_slot_stride;
+  LLDB_LOG(GetLog(LLDBLog::OS),
+           "Context-indexed task: protocol thread {0:x}, index {1}, kind {2}, "
+           "slot {3:x}",
+           real_thread.GetProtocolID(), context->index, uint32_t(context->kind),
+           slot);
+  return slot;
+}
+
+llvm::SmallVector<std::optional<addr_t>>
+PlatformIndexedTaskFinder::GetTaskAddrForThread(
+    llvm::ArrayRef<Thread *> threads) {
+  if (threads.empty())
+    return {};
+  llvm::SmallVector<std::optional<addr_t>> locations;
+  for (auto *thread : threads) {
+    Thread &real_thread = GetPlatformExecutionContext(*thread);
+    auto location = ComputeTaskAddrLocation(real_thread);
+    if (!location) {
+      LLDB_LOG_ERROR(GetLog(LLDBLog::OS), location.takeError(),
+                     "Context-indexed task lookup failed: {0}");
+      locations.push_back(std::nullopt);
+    } else
+      locations.push_back(*location);
+  }
+  return MultiReadPointers(*threads[0]->GetProcess(), locations);
+}
 
 /// Lightweight wrapper around TaskStatusRecord pointers, providing:
 ///   * traversal over the embedded linnked list of status records
@@ -4407,16 +4776,45 @@ llvm::Expected<uint64_t> FindPrologueSize(Process &process,
 
 using CurrentTaskStorageKind = SwiftLanguageRuntime::CurrentTaskStorageKind;
 
-std::unique_ptr<TaskFinder>
+std::shared_ptr<TaskFinder> SwiftLanguageRuntime::GetPlatformAddressTaskFinder(
+    ModuleSP concurrency_module) {
+  if (!m_platform_address_task_finder ||
+      m_platform_address_task_module != concurrency_module) {
+    m_platform_address_task_finder =
+        std::make_shared<PlatformAddressFunctionTaskFinder>();
+    m_platform_address_task_module = std::move(concurrency_module);
+  }
+  return m_platform_address_task_finder;
+}
+
+std::shared_ptr<TaskFinder>
 GetTaskFinder(Process &process,
               const SwiftLanguageRuntime::ConcurrencyInfo &info) {
   if (!info.task_storage_kind)
     return std::make_unique<NoTaskFinder>();
+  if ((*info.task_storage_kind == CurrentTaskStorageKind::platform_indexed ||
+       *info.task_storage_kind == CurrentTaskStorageKind::platform_function ||
+       *info.task_storage_kind ==
+           CurrentTaskStorageKind::platform_address_function) &&
+      (!info.version || *info.version < 5)) {
+    LLDB_LOG(GetLog(LLDBLog::OS),
+             "Typed platform task lookup requires concurrency debug ABI 5; "
+             "legacy table/helper ABI will not be used");
+    return std::make_unique<NoTaskFinder>();
+  }
   switch (*info.task_storage_kind) {
   case CurrentTaskStorageKind::pthread_reserved_key:
     return std::make_unique<PthreadReservedKeyTaskFinder>();
   case CurrentTaskStorageKind::cxx_thread_local:
     return std::make_unique<CxxThreadLocalTaskFinder>(info.concurrency_module);
+  case CurrentTaskStorageKind::platform_function:
+    return std::make_unique<PlatformFunctionTaskFinder>();
+  case CurrentTaskStorageKind::platform_indexed:
+    return std::make_unique<PlatformIndexedTaskFinder>();
+  case CurrentTaskStorageKind::platform_address_function:
+    if (auto *runtime = SwiftLanguageRuntime::Get(&process))
+      return runtime->GetPlatformAddressTaskFinder(info.concurrency_module);
+    break;
   case CurrentTaskStorageKind::global:
     return std::make_unique<GlobalVarTaskFinder>(info.concurrency_module,
                                                  process);
@@ -4429,7 +4827,7 @@ GetTaskFinder(Process &process,
   return std::make_unique<NoTaskFinder>();
 }
 
-std::unique_ptr<TaskFinder> GetTaskFinder(Process &process) {
+std::shared_ptr<TaskFinder> GetTaskFinder(Process &process) {
   return GetTaskFinder(process,
                        SwiftLanguageRuntime::FindConcurrencyInfo(process));
 }

@@ -725,6 +725,41 @@ The JSON standard requires that numbers be expressed in base 10 - so all of
 these are. `requested_qos` is a dictionary with three key-value pairs in it -
 so the UI layer may choose the form most appropriate for displaying to the user.
 
+### Experimental execution-context storage index
+
+The local platform-current-task prototype accepts a pair of unsigned JSON
+integers: `execution_context_index` (64-bit) and `execution_context_kind`
+(`1` for a software thread, `2` for a hardware thread/logical CPU/hart). Both
+fields are required. This is an experimental
+extension, not an established contract implemented by existing remote stubs.
+For example, `{"execution_context_index":1,"execution_context_kind":2}`
+explicitly supplies hardware-context index 1. A known single hardware context
+can use index 0; missing identity information must not be replaced with zero.
+
+The context represented by a remote thread may be an OS thread, an RTOS thread,
+or a hardware thread. Its storage index is independent
+of its remote thread ID, debugger thread index, and last-executed CPU. Two
+threads on the same CPU may have different storage indexes; CPU migration must
+not redirect a thread to another context's storage. The stub must report context
+creation and destruction, including numeric thread-ID reuse. Metadata is cached
+for a stop and fetched again after execution resumes.
+
+An omitted, negative, or non-integer value, or an unknown kind, leaves platform
+task lookup unavailable. For indexed storage, the debugger must first compare
+the kind with `_swift_concurrency_debug_current_task_context_kind`, before
+resolving table metadata or reading a slot. It then checks the index against the
+table count before calculating the address. For helper storage, the debugger
+passes the index and kind as the C function's two arguments; the platform
+decides whether it can answer the pair. A successful null task value and an
+unavailable lookup are distinct. The typed helper ABI requires concurrency
+debug version 5; older no-argument helpers must not be called with this ABI.
+
+The explicit `plugin.process.gdb-remote.hardware-core-id-address` setting is a
+separate adapter for fixed hardware-core contexts and takes precedence over these
+fields. Failed or invalid hardware configuration does not fall back to another
+index namespace. Neither adapter infers an index from a raw thread ID or the
+ordinary `core` metadata field.
+
 Sending JSON over gdb-remote protocol introduces some problems.  We may be
 sending strings with arbitrary contents in them, including the `#`, `$`, and `*`
 characters that have special meaning in gdb-remote protocol and cannot occur

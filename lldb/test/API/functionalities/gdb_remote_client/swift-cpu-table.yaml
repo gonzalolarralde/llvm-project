@@ -1,0 +1,61 @@
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+  Machine: EM_X86_64
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address: 0x1000
+    Content: "c3c3c3c3"
+  - Name: .data
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_WRITE ]
+    Address: 0x2000
+    Size: 64
+Symbols:
+  - Name: swift_task_switch
+    Type: STT_FUNC
+    Binding: STB_GLOBAL
+    Section: .text
+    Value: 0x1000
+  - Name: _swift_concurrency_debug_internal_layout_version
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2000
+  - Name: _swift_concurrency_debug_current_task_slots
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2008
+  - Name: _swift_concurrency_debug_current_task_slot_count
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2010
+  - Name: _swift_concurrency_debug_current_task_slot_stride
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2018
+  - Name: _swift_concurrency_debug_current_task_context_kind
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2030
+ProgramHeaders:
+  - Type: PT_LOAD
+    Flags: [ PF_X, PF_R ]
+    VAddr: 0x1000
+    PAddr: 0x1000
+    FirstSec: .text
+    LastSec: .text
+  - Type: PT_LOAD
+    Flags: [ PF_R, PF_W ]
+    VAddr: 0x2000
+    PAddr: 0x2000
+    FirstSec: .data
+    LastSec: .data

@@ -21,6 +21,10 @@ let Definition = "processgdbremote", Path = "plugin.process.gdb-remote" in {
     Global,
     DefaultFalse,
     Desc<"Specify if the server should use 'g' packets to read registers.">;
+  def HardwareCoreIDAddress: Property<"hardware-core-id-address", "String">,
+    Global,
+    DefaultStringValue<"">,
+    Desc<"Experimental: address of a read-only 32-bit CPU identity register, read through the selected hardware context. Setting this before connecting asserts that remote threads represent fixed hardware CPUs and that Hg selects the memory-access CPU. Do not use with RTOS threads. Empty disables this contract.">;
   def PacketTestDelay
       : Property<"packet-test-delay", "UInt64">,
         Global,

@@ -1,0 +1,62 @@
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+  Machine: EM_ARM
+  Flags: [ EF_ARM_EABI_VER5 ]
+  Entry: 0x1101
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address: 0x1000
+    Size: 512
+  - Name: .data
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_WRITE ]
+    Address: 0x2000
+    Size: 16
+Symbols:
+  - Name: swift_task_switch
+    Type: STT_FUNC
+    Binding: STB_GLOBAL
+    Section: .text
+    Value: 0x1001
+    Size: 2
+  - Name: _swift_concurrency_debug_getCurrentTask
+    Type: STT_FUNC
+    Binding: STB_GLOBAL
+    Section: .text
+    Value: 0x1001
+    Size: 2
+  - Name: _start
+    Type: STT_FUNC
+    Binding: STB_GLOBAL
+    Section: .text
+    Value: 0x1101
+    Size: 2
+  - Name: _swift_concurrency_debug_getCurrentTaskAddress
+    Type: STT_FUNC
+    Binding: STB_GLOBAL
+    Section: .text
+    Value: 0x1001
+    Size: 2
+  - Name: _swift_concurrency_debug_internal_layout_version
+    Type: STT_OBJECT
+    Binding: STB_GLOBAL
+    Section: .data
+    Value: 0x2000
+ProgramHeaders:
+  - Type: PT_LOAD
+    Flags: [ PF_X, PF_R ]
+    VAddr: 0x1000
+    PAddr: 0x1000
+    FirstSec: .text
+    LastSec: .text
+  - Type: PT_LOAD
+    Flags: [ PF_R, PF_W ]
+    VAddr: 0x2000
+    PAddr: 0x2000
+    FirstSec: .data
+    LastSec: .data

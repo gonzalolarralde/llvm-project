@@ -37,6 +37,8 @@ public:
 
   const char *GetName() override;
 
+  std::optional<ExecutionContextIndex> GetExecutionContextIndex() override;
+
   const char *GetQueueName() override;
 
   lldb::QueueKind GetQueueKind() override;

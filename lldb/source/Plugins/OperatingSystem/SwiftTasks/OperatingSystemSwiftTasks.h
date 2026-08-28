@@ -55,7 +55,7 @@ private:
   lldb::ThreadSP FindOrCreateSwiftThread(ThreadList &old_thread_list,
                                          uint64_t task_id);
 
-  std::unique_ptr<TaskFinder> m_task_finder;
+  std::shared_ptr<TaskFinder> m_task_finder;
 };
 } // namespace lldb_private
 

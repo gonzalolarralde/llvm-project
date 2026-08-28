@@ -205,6 +205,9 @@ public:
 
   GDBRemoteCommunicationClient &GetGDBRemote() { return m_gdb_comm; }
 
+  std::optional<Thread::ExecutionContextIndex>
+  GetExecutionContextIndex(ThreadGDBRemote &thread);
+
   Status SendEventData(const char *data) override;
 
   // Override DidExit so we can disconnect from the remote GDB server
@@ -326,6 +329,8 @@ protected:
       LLDB_INVALID_THREAD_ID; // Thread ID from the most recent
                               // T-packet's "thread:<tid>" key.
   bool m_use_g_packet_for_reading;
+
+  std::optional<lldb::addr_t> m_hardware_core_id_address;
 
   bool m_allow_flash_writes;
   using FlashRangeVector = lldb_private::RangeVector<lldb::addr_t, size_t>;

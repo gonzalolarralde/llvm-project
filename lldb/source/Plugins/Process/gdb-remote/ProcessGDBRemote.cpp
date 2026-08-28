@@ -190,6 +190,18 @@ public:
     return GetPropertyAtIndexAs<bool>(idx, true);
   }
 
+  std::optional<addr_t> GetHardwareCoreIDAddress() const {
+    llvm::StringRef value = GetPropertyAtIndexAs<llvm::StringRef>(
+        ePropertyHardwareCoreIDAddress, "");
+    if (value.empty())
+      return std::nullopt;
+    addr_t address;
+    if (value.getAsInteger(0, address) || address == LLDB_INVALID_ADDRESS ||
+        address % 4)
+      return LLDB_INVALID_ADDRESS;
+    return address;
+  }
+
   uint64_t GetPacketTestDelay() const {
     const uint32_t idx = ePropertyPacketTestDelay;
     return GetPropertyAtIndexAs<uint64_t>(
@@ -346,6 +358,8 @@ ProcessGDBRemote::ProcessGDBRemote(lldb::TargetSP target_sp,
 
   m_use_g_packet_for_reading =
       GetGlobalPluginProperties().GetUseGPacketForReading();
+  m_hardware_core_id_address =
+      GetGlobalPluginProperties().GetHardwareCoreIDAddress();
 }
 
 // Destructor
@@ -2883,6 +2897,50 @@ void ProcessGDBRemote::WillPublicStop() {
 }
 
 // Process Memory
+std::optional<Thread::ExecutionContextIndex>
+ProcessGDBRemote::GetExecutionContextIndex(ThreadGDBRemote &thread) {
+  using ContextIndex = Thread::ExecutionContextIndex;
+  if (!m_hardware_core_id_address) {
+    // Experimental platform contract, independent of the thread's raw ID or
+    // reported CPU. A stub can use this for OS/RTOS contexts as well as cores.
+    if (auto info = thread.GetExtendedInfo())
+      if (auto *dictionary = info->GetAsDictionary()) {
+        uint64_t index, kind;
+        if (dictionary->GetValueForKeyAsInteger("execution_context_index",
+                                                index) &&
+            dictionary->GetValueForKeyAsInteger("execution_context_kind",
+                                                kind) &&
+            (kind == uint32_t(ContextIndex::Kind::SoftwareThread) ||
+             kind == uint32_t(ContextIndex::Kind::HardwareThread)))
+          return ContextIndex{index, ContextIndex::Kind(kind)};
+      }
+    return std::nullopt;
+  }
+
+  // Explicit hardware-context adapter. Failure must not fall back to a
+  // different index namespace.
+  const auto tid = thread.GetProtocolID();
+  if (tid == LLDB_INVALID_THREAD_ID ||
+      *m_hardware_core_id_address == LLDB_INVALID_ADDRESS)
+    return std::nullopt;
+
+  // Hold the packet lock across selection and the uncached MMIO read. The same
+  // address can return different values on different CPUs in the same stop.
+  GDBRemoteCommunicationClient::Lock lock(m_gdb_comm);
+  if (!lock || !m_gdb_comm.SetCurrentThread(tid))
+    return std::nullopt;
+  uint8_t bytes[4];
+  Status error;
+  if (DoReadMemory(*m_hardware_core_id_address, bytes, sizeof(bytes), error) !=
+          sizeof(bytes) ||
+      error.Fail())
+    return std::nullopt;
+  DataExtractor data(bytes, sizeof(bytes), GetByteOrder(),
+                     GetAddressByteSize());
+  offset_t offset = 0;
+  return ContextIndex{data.GetU32(&offset), ContextIndex::Kind::HardwareThread};
+}
+
 size_t ProcessGDBRemote::DoReadMemory(addr_t addr, void *buf, size_t size,
                                       Status &error) {
   using xPacketState = GDBRemoteCommunicationClient::xPacketState;

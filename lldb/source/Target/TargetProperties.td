@@ -45,6 +45,9 @@ let Definition = "target_experimental", Path = "target.experimental" in {
   def SwiftCacheTaskPointerLocation: Property<"swift-cache-task-pointer-location", "Boolean">,
     DefaultTrue,
     Desc<"Enables caching of task pointers inside the swift tasks plugin">;
+  def SwiftTaskAllowInferiorCalls: Property<"swift-task-allow-inferior-calls", "Boolean">,
+    DefaultFalse,
+    Desc<"Allow experimental Swift current-task helpers to resume the target. Peer CPUs may also resume; this does not preserve a whole-system snapshot.">;
   def SwiftUseContextFreePrintObject: Property<"swift-use-context-free-po", "Boolean">,
     DefaultTrue,
     Desc<"If true, use the context-free po implementation for Swift.">;

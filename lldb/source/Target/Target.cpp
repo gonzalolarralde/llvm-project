@@ -5481,6 +5481,16 @@ bool TargetProperties::GetSwiftCacheTaskPointerLocation() const {
   return true;
 }
 
+bool TargetProperties::GetSwiftTaskAllowInferiorCalls() const {
+  const Property *property =
+      m_collection_sp->GetPropertyAtIndex(ePropertyExperimental);
+  auto *values = property->GetValue()->GetAsProperties();
+  return values &&
+         values
+             ->GetPropertyAtIndexAs<bool>(ePropertySwiftTaskAllowInferiorCalls)
+             .value_or(false);
+}
+
 Args TargetProperties::GetSwiftPluginServerForPath() const {
   const uint32_t idx = ePropertySwiftPluginServerForPath;
 
