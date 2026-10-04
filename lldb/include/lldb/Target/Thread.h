@@ -1200,6 +1200,30 @@ public:
   // to/from the debugging protocol.
   virtual lldb::user_id_t GetProtocolID() const { return GetID(); }
 
+  struct ExecutionContextIndex {
+    enum class Kind : uint32_t { SoftwareThread = 1, HardwareThread = 2 };
+    uint64_t index;
+    Kind kind;
+
+    bool operator==(const ExecutionContextIndex &other) const {
+      return index == other.index && kind == other.kind;
+    }
+    bool operator!=(const ExecutionContextIndex &other) const {
+      return !(*this == other);
+    }
+  };
+
+  /// An optional typed platform index into execution-context-local storage.
+  /// The platform context is represented by this Thread (an OS/RTOS thread,
+  /// hardware thread), independently of how its local
+  /// storage is accessed. An index is an additional storage capability, not
+  /// context identity. Backends must explicitly provide the mapping; neither
+  /// a numeric thread ID nor a migratable thread's last CPU is an implicit
+  /// index.
+  virtual std::optional<ExecutionContextIndex> GetExecutionContextIndex() {
+    return std::nullopt;
+  }
+
   // lldb::ExecutionContextScope pure virtual functions
   lldb::TargetSP CalculateTarget() override;
 

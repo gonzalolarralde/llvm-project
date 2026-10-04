@@ -1398,14 +1398,27 @@ bool ABISysV_arm::PrepareTrivialCall(Thread &thread, addr_t sp,
   so_addr.SetLoadAddress(function_addr, target_sp.get());
   function_addr = so_addr.GetCallableLoadAddress(target_sp.get());
 
-  const RegisterInfo *cpsr_reg_info =
-      reg_ctx->GetRegisterInfo(eRegisterKindGeneric, LLDB_REGNUM_GENERIC_FLAGS);
-  const uint32_t curr_cpsr = reg_ctx->ReadRegisterAsUnsigned(cpsr_reg_info, 0);
+  // Cortex-M stubs expose xPSR, which may have no generic FLAGS mapping. Its
+  // Thumb bit is bit 24, not CPSR's bit 5 (part of the exception number in
+  // xPSR).
+  const RegisterInfo *cpsr_reg_info = reg_ctx->GetRegisterInfoByName("xpsr");
+  const bool is_m_profile = cpsr_reg_info != nullptr;
+  if (!cpsr_reg_info)
+    cpsr_reg_info = reg_ctx->GetRegisterInfo(eRegisterKindGeneric,
+                                             LLDB_REGNUM_GENERIC_FLAGS);
+  if (!cpsr_reg_info)
+    return false;
+  const uint64_t curr_cpsr =
+      reg_ctx->ReadRegisterAsUnsigned(cpsr_reg_info, UINT64_MAX);
+  if (curr_cpsr == UINT64_MAX)
+    return false;
 
   // Make a new CPSR and mask out any Thumb IT (if/then) bits
   uint32_t new_cpsr = curr_cpsr & ~MASK_CPSR_IT_MASK;
   // If bit zero or 1 is set, this must be thumb...
-  if (function_addr & 1ull)
+  if (is_m_profile)
+    new_cpsr |= 1u << 24;
+  else if (function_addr & 1ull)
     new_cpsr |= MASK_CPSR_T; // Set T bit in CPSR
   else
     new_cpsr &= ~MASK_CPSR_T; // Clear T bit in CPSR

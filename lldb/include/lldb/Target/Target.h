@@ -230,6 +230,8 @@ public:
 
   bool GetSwiftCacheTaskPointerLocation() const;
 
+  bool GetSwiftTaskAllowInferiorCalls() const;
+
   Args GetSwiftPluginServerForPath() const;
 
   bool GetSwiftAutoImportFrameworks() const;

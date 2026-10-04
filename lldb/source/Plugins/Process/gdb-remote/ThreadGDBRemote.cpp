@@ -33,6 +33,15 @@ using namespace lldb_private::process_gdb_remote;
 
 // Thread Registers
 
+std::optional<Thread::ExecutionContextIndex>
+ThreadGDBRemote::GetExecutionContextIndex() {
+  auto process = GetProcess();
+  if (!process)
+    return std::nullopt;
+  return static_cast<ProcessGDBRemote &>(*process).GetExecutionContextIndex(
+      *this);
+}
+
 ThreadGDBRemote::ThreadGDBRemote(Process &process, lldb::tid_t tid)
     : Thread(process, tid), m_thread_name(), m_dispatch_queue_name(),
       m_thread_dispatch_qaddr(LLDB_INVALID_ADDRESS),

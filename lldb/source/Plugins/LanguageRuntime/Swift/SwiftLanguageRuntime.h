@@ -68,6 +68,7 @@ class ReflectionContextInterface;
 class LLDBMemoryReader;
 class MemoryReaderLocalBufferHolder;
 struct SuperClassType;
+struct TaskFinder;
 
 using ThreadSafeReflectionContext = LockGuarded<ReflectionContextInterface>;
 
@@ -131,8 +132,11 @@ public:
   ///   2 - AsyncTask gained optional tail-allocated `NameFragment` ahead of its
   ///       other fragments when the task has an initial name (ahead of the
   ///       ChildFragment).
+  ///   3 - the top byte describes the current-task storage kind.
+  ///   4 - platform-function and context-indexed current-task storage kinds.
+  ///   5 - typed platform context indexes and two-argument platform helpers.
   static constexpr uint32_t ConcurrencyDebugVersionBaseline = 1;
-  static constexpr uint32_t ConcurrencyDebugVersionLatest = 3;
+  static constexpr uint32_t ConcurrencyDebugVersionLatest = 5;
 
   /// True iff `version` is a concurrency runtime layout version this build
   /// of LLDB supports. A missing version (`std::nullopt`) is never supported.
@@ -142,14 +146,18 @@ public:
            *version <= ConcurrencyDebugVersionLatest;
   }
 
-  // These should match the values in swift/stdlib/public/Concurrency/Debug.h
+  // These should match the values in
+  // swift/include/swift/Runtime/ConcurrencyDebug.h
   enum class CurrentTaskStorageKind {
     cxx_thread_local = 1,
     global = 2,
     pthread_reserved_key = 3,
     pthread_allocated_key = 4,
     global_tls_array = 5,
-    last = 6,
+    platform_indexed = 6,
+    platform_function = 7,
+    platform_address_function = 8,
+    last = 9,
   };
   struct ConcurrencyInfo {
     std::optional<uint32_t> version;
@@ -157,6 +165,9 @@ public:
     lldb::ModuleSP concurrency_module;
   };
   static ConcurrencyInfo FindConcurrencyInfo(Process &process);
+
+  std::shared_ptr<TaskFinder>
+  GetPlatformAddressTaskFinder(lldb::ModuleSP concurrency_module);
   /// \}
 
   /// PluginInterface protocol.
@@ -944,6 +955,9 @@ protected:
   llvm::StringMap<std::vector<std::string>> m_conformances;
 
 private:
+  std::shared_ptr<TaskFinder> m_platform_address_task_finder;
+  lldb::ModuleSP m_platform_address_task_module;
+
   /// Don't call these directly.
   /// \{
   /// There is a global variable \p _swift_classIsSwiftMask that is
@@ -1086,13 +1100,13 @@ struct TaskFinder {
 
 /// Returns a TaskFinder for `info`. The pointer is guaranteed to be non-null,
 /// but may be a NoTaskFinder if the storage kind is unsupported or absent.
-std::unique_ptr<TaskFinder>
+std::shared_ptr<TaskFinder>
 GetTaskFinder(Process &process, const SwiftLanguageRuntime::ConcurrencyInfo &);
 
 /// Inspects the concurrency library in the process, if any, to construct a
 /// TaskFinder. The pointer is guaranteed to be non-null, but the returned
 /// object is a NoTaskFinder if the runtime is not supported or can't be found.
-std::unique_ptr<TaskFinder> GetTaskFinder(Process &Process);
+std::shared_ptr<TaskFinder> GetTaskFinder(Process &Process);
 
 /// Represents `swift::JobFlags` as defined in
 /// `include/swift/ABI/MetadataValues.h`.
