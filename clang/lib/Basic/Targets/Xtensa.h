@@ -20,6 +20,7 @@
 #include "llvm/ADT/StringSwitch.h"
 #include "llvm/Support/Compiler.h"
 #include "llvm/TargetParser/Triple.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 
 #include "clang/Basic/Builtins.h"
 #include "clang/Basic/MacroBuilder.h"
@@ -33,6 +34,7 @@ class LLVM_LIBRARY_VISIBILITY XtensaTargetInfo : public TargetInfo {
 
 protected:
   std::string CPU;
+  llvm::StringMap<bool> EnabledFeatures;
 
 public:
   XtensaTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
@@ -97,12 +99,29 @@ public:
   }
 
   bool isValidCPUName(StringRef Name) const override {
-    return llvm::StringSwitch<bool>(Name).Case("generic", true).Default(false);
+    return llvm::Xtensa::parseCPUKind(Name) != llvm::Xtensa::CK_INVALID;
   }
 
   bool setCPU(StringRef Name) override {
+    if (!isValidCPUName(Name))
+      return false;
     CPU = Name;
-    return isValidCPUName(Name);
+    return true;
+  }
+
+  void fillValidCPUList(SmallVectorImpl<StringRef> &Values) const override {
+    llvm::Xtensa::fillValidCPUList(Values);
+  }
+
+  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                      StringRef CPU,
+                      const std::vector<std::string> &FeaturesVec) const override;
+
+  bool handleTargetFeatures(std::vector<std::string> &Features,
+                            DiagnosticsEngine &Diags) override;
+
+  bool hasFeature(StringRef Feature) const override {
+    return Feature == "xtensa" || EnabledFeatures.lookup(Feature);
   }
 };
 

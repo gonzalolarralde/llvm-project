@@ -839,6 +839,8 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
   case llvm::Triple::xtensa:
     if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
       return A->getValue();
+    if (T.getVendorName() == "esp32s3")
+      return "esp32s3";
     return "";
   }
 }
