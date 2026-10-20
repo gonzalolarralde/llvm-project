@@ -33,7 +33,8 @@ enum XtensaCPKind {
   CPExtSymbol,
   CPBlockAddress,
   CPMachineBasicBlock,
-  CPJumpTable
+  CPJumpTable,
+  CPData
 };
 
 enum XtensaCPModifier {
@@ -93,6 +94,7 @@ public:
     return Kind == XtensaCP::CPMachineBasicBlock;
   }
   bool isJumpTable() const { return Kind == XtensaCP::CPJumpTable; }
+  bool isData() const { return Kind == XtensaCP::CPData; }
 
   int getExistingMachineCPValue(MachineConstantPool *CP,
                                 Align Alignment) override;
@@ -124,15 +126,19 @@ inline raw_ostream &operator<<(raw_ostream &O,
 /// Constants (for example BlockAddresses).
 class XtensaConstantPoolConstant : public XtensaConstantPoolValue {
   const Constant *CVal; // Constant being loaded.
+  Align DataAlignment;
 
   XtensaConstantPoolConstant(const Constant *C, unsigned ID,
-                             XtensaCP::XtensaCPKind Kind);
+                             XtensaCP::XtensaCPKind Kind, Align DataAlignment);
 
 public:
   static XtensaConstantPoolConstant *Create(const Constant *C, unsigned ID,
-                                            XtensaCP::XtensaCPKind Kind);
+                                            XtensaCP::XtensaCPKind Kind,
+                                            Align DataAlignment = Align(4));
 
   const BlockAddress *getBlockAddress() const;
+  const Constant *getConstant() const { return CVal; }
+  Align getDataAlignment() const { return DataAlignment; }
 
   int getExistingMachineCPValue(MachineConstantPool *CP,
                                 Align Alignment) override;
@@ -145,11 +151,12 @@ public:
 
   void print(raw_ostream &O) const override;
   static bool classof(const XtensaConstantPoolValue *APV) {
-    return APV->isBlockAddress();
+    return APV->isBlockAddress() || APV->isData();
   }
 
   bool equals(const XtensaConstantPoolConstant *A) const {
-    return CVal == A->CVal && XtensaConstantPoolValue::equals(A);
+    return CVal == A->CVal && DataAlignment == A->DataAlignment &&
+           XtensaConstantPoolValue::equals(A);
   }
 };
 

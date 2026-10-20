@@ -1154,6 +1154,24 @@ SDValue XtensaTargetLowering::LowerConstantPool(SDValue Op,
   SDValue Result;
 
   if (!CP->isMachineConstantPoolEntry()) {
+    const Constant *C = CP->getConstVal();
+    // L32R loads one word from a literal, rather than materializing the
+    // literal's address. Wide/scalarized vector constants therefore need an
+    // address literal pointing at separately emitted, aligned constant data.
+    if (DAG.getDataLayout().getTypeAllocSize(C->getType()) > 4 ||
+        C->getType()->isAggregateType() || C->getType()->isVectorTy()) {
+      auto *CPV = XtensaConstantPoolConstant::Create(
+          C, 0, XtensaCP::CPData, CP->getAlign());
+      SDValue AddressLiteral = DAG.getTargetConstantPool(CPV, PtrVT, Align(4));
+      SDValue Address = DAG.getLoad(
+          PtrVT, SDLoc(Op), DAG.getEntryNode(), getAddrPCRel(AddressLiteral, DAG),
+          MachinePointerInfo::getConstantPool(DAG.getMachineFunction()));
+      if (CP->getOffset())
+        Address = DAG.getNode(
+            ISD::ADD, SDLoc(Op), PtrVT, Address,
+            DAG.getConstant(CP->getOffset(), SDLoc(Op), PtrVT));
+      return Address;
+    }
     Result = DAG.getTargetConstantPool(CP->getConstVal(), PtrVT, CP->getAlign(),
                                        CP->getOffset());
   } else {

@@ -77,6 +77,20 @@ void XtensaAsmPrinter::emitMachineConstantPoolValue(
   } else if (XtensaCPV->isJumpTable()) {
     unsigned Idx = cast<XtensaConstantPoolJumpTable>(XtensaCPV)->getIndex();
     MCSym = this->GetJTISymbol(Idx, false);
+  } else if (XtensaCPV->isData()) {
+    auto *Data = cast<XtensaConstantPoolConstant>(XtensaCPV);
+    const Constant *C = Data->getConstant();
+    Align Alignment = Data->getDataAlignment();
+    MCSection *Section = getObjFileLowering().getSectionForConstant(
+        getDataLayout(), SectionKind::getReadOnly(), C, Alignment, &MF->getFunction());
+    MCSym = OutContext.getOrCreateSymbol(
+        GetCPISymbol(XtensaCPV->getLabelId())->getName() + ".data");
+    OutStreamer->pushSection();
+    OutStreamer->switchSection(Section);
+    emitAlignment(Alignment);
+    OutStreamer->emitLabel(MCSym);
+    emitGlobalConstant(getDataLayout(), C);
+    OutStreamer->popSection();
   } else {
     assert(XtensaCPV->isExtSymbol() && "unrecognized constant pool value");
     XtensaConstantPoolSymbol *XtensaSym =

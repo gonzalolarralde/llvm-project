@@ -73,13 +73,19 @@ void XtensaConstantPoolValue::print(raw_ostream &O) const {}
 //===----------------------------------------------------------------------===//
 
 XtensaConstantPoolConstant::XtensaConstantPoolConstant(
-    const Constant *C, unsigned ID, XtensaCP::XtensaCPKind Kind)
-    : XtensaConstantPoolValue(C->getType(), ID, Kind), CVal(C) {}
+    const Constant *C, unsigned ID, XtensaCP::XtensaCPKind Kind,
+    Align DataAlignment)
+    : XtensaConstantPoolValue(Kind == XtensaCP::CPData
+                                 ? Type::getInt32Ty(C->getContext())
+                                 : C->getType(),
+                             ID, Kind),
+      CVal(C), DataAlignment(DataAlignment) {}
 
 XtensaConstantPoolConstant *
 XtensaConstantPoolConstant::Create(const Constant *C, unsigned ID,
-                                   XtensaCP::XtensaCPKind Kind) {
-  return new XtensaConstantPoolConstant(C, ID, Kind);
+                                   XtensaCP::XtensaCPKind Kind,
+                                   Align DataAlignment) {
+  return new XtensaConstantPoolConstant(C, ID, Kind, DataAlignment);
 }
 
 const BlockAddress *XtensaConstantPoolConstant::getBlockAddress() const {
@@ -101,6 +107,7 @@ bool XtensaConstantPoolConstant::hasSameValue(XtensaConstantPoolValue *ACPV) {
 
 void XtensaConstantPoolConstant::addSelectionDAGCSEId(FoldingSetNodeID &ID) {
   ID.AddPointer(CVal);
+  ID.AddInteger(DataAlignment.value());
   XtensaConstantPoolValue::addSelectionDAGCSEId(ID);
 }
 
