@@ -299,6 +299,7 @@ TargetLowering::ConstraintType
 XtensaTargetLowering::getConstraintType(StringRef Constraint) const {
   if (Constraint.size() == 1) {
     switch (Constraint[0]) {
+    case 'a':
     case 'r':
       return C_RegisterClass;
     default:
@@ -326,6 +327,7 @@ XtensaTargetLowering::getSingleConstraintMatchWeight(
     Weight = TargetLowering::getSingleConstraintMatchWeight(Info, Constraint);
     break;
   case 'r':
+  case 'a':
     if (Ty->isIntegerTy())
       Weight = CW_Register;
     break;
@@ -341,6 +343,7 @@ XtensaTargetLowering::getRegForInlineAsmConstraint(
     switch (Constraint[0]) {
     default:
       break;
+    case 'a': // Xtensa address register (also used for integer operands).
     case 'r': // General-purpose register
       return std::make_pair(0U, &Xtensa::ARRegClass);
     }
