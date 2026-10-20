@@ -809,7 +809,7 @@ template <> struct MDNodeKeyImpl<DICompositeType> {
         DataLocation(N->getRawDataLocation()),
         Associated(N->getRawAssociated()), Allocated(N->getRawAllocated()),
         Rank(N->getRawRank()), Annotations(N->getRawAnnotations()),
-        Specification(N->getSpecification()),
+        Specification(N->getRawSpecification()),
         NumExtraInhabitants(N->getNumExtraInhabitants()),
         BitStride(N->getRawBitStride()) {}
 
@@ -830,7 +830,7 @@ template <> struct MDNodeKeyImpl<DICompositeType> {
            Associated == RHS->getRawAssociated() &&
            Allocated == RHS->getRawAllocated() && Rank == RHS->getRawRank() &&
            Annotations == RHS->getRawAnnotations() &&
-           Specification == RHS->getSpecification() &&
+           Specification == RHS->getRawSpecification() &&
            NumExtraInhabitants == RHS->getNumExtraInhabitants() &&
            BitStride == RHS->getRawBitStride();
   }
