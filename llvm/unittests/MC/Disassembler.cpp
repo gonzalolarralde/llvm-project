@@ -108,3 +108,24 @@ TEST(Disassembler, WebAssemblyTest) {
 
   LLVMDisasmDispose(DCR);
 }
+
+TEST(Disassembler, XtensaSymbolizer) {
+  InitializeAllTargetInfos();
+  InitializeAllTargetMCs();
+  InitializeAllDisassemblers();
+
+  LLVMDisasmContextRef DCR = LLVMCreateDisasm(
+      "xtensa-unknown-elf", nullptr, 0, nullptr, symbolLookupCallback);
+  if (!DCR)
+    GTEST_SKIP();
+
+  // beqz a2, 8: branch decoding calls the symbolizer even when it cannot
+  // resolve the target. The disassembler must provide its comment stream.
+  uint8_t Bytes[] = {0x16, 0x82, 0x00};
+  char OutString[100];
+  EXPECT_EQ(LLVMDisasmInstruction(DCR, Bytes, sizeof(Bytes), 0, OutString,
+                                 sizeof(OutString)),
+            3U);
+  EXPECT_NE(StringRef(OutString).find("beqz"), StringRef::npos);
+  LLVMDisasmDispose(DCR);
+}

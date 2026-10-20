@@ -500,6 +500,7 @@ DecodeStatus XtensaDisassembler::getInstruction(MCInst &MI, uint64_t &Size,
                                                 ArrayRef<uint8_t> Bytes,
                                                 uint64_t Address,
                                                 raw_ostream &CS) const {
+  CommentStream = &CS;
   // A failed decode must not retain the previous instruction's size. In
   // particular, disabled density/windowed instructions can occur at the end
   // of a section when the caller selected the generic CPU.
