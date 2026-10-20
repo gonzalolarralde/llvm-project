@@ -32,4 +32,6 @@ class TestSwiftEmbeddedTypealias(TestBase):
 
         self.expect("frame variable classAlias", substrs=["x = 500"])
 
+        self.expect("frame variable objectHolder", substrs=["count = 42"])
+
         self.expect("frame variable outer", substrs=["x = 777"])

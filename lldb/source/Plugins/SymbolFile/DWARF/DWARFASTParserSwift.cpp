@@ -195,6 +195,18 @@ lldb::TypeSP DWARFASTParserSwift::ParseTypeFromDWARF(const SymbolContext &sc,
     return {};
   };
 
+  // An existential whose constraint is a type alias is represented by a
+  // single-member wrapper. It shares the alias's mangled name. Resolve the
+  // anchored typedef before consulting the name cache, otherwise the wrapper
+  // can hide the typedef and its desugared name from ResolveTypeAlias.
+  if (die.Tag() == llvm::dwarf::DW_TAG_structure_type) {
+    DWARFDIE child = die.GetFirstChild();
+    if (child && child.Tag() == llvm::dwarf::DW_TAG_member &&
+        llvm::StringRef(child.GetName() ? child.GetName() : "") ==
+            "$swift.constraint")
+      return get_type(child);
+  }
+
   if (!name && !mangled_name &&
       die.Tag() == llvm::dwarf::DW_TAG_structure_type) {
     // This is a sized container for a bound generic.

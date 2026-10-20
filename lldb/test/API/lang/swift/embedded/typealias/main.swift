@@ -6,6 +6,12 @@ typealias IntPair = (Int, Int)
 typealias MixedTuple = (Int, Double, Bool)
 
 typealias AliasOfMyInt = MyInt
+typealias HeapObject = AnyObject
+
+struct ObjectHolder {
+    var object: HeapObject
+    var count: Int
+}
 
 struct SimpleStruct {
     var x: MyInt
@@ -63,6 +69,7 @@ func test() {
     let genericAlias = GenericWithAlias<Int>(value: 314, aliased: 100)
 
     let classAlias = ClassWithAlias(x: 500)
+    let objectHolder = ObjectHolder(object: classAlias, count: 42)
 
     let outer = Outer(inner: Outer.Inner(x: 777))
 
