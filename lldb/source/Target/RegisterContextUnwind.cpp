@@ -1839,15 +1839,24 @@ UnwindPlanSP RegisterContextUnwind::TryAdoptArchitectureUnwindPlan() {
         arch->GetArchitectureUnwindPlan(m_thread, this, m_full_unwind_plan_sp);
 
   if (arch_override_plan_sp) {
+    const UnwindPlan::Row *active_row =
+        arch_override_plan_sp->GetRowForFunctionOffset(m_current_offset);
+    addr_t cfa;
+    if (!active_row ||
+        !ReadFrameAddress(arch_override_plan_sp->GetRegisterKind(),
+                          active_row->GetCFAValue(), cfa) ||
+        !CallFrameAddressIsValid(process_sp->GetABI(), cfa))
+      return {};
     m_full_unwind_plan_sp = arch_override_plan_sp;
+    m_cfa = cfa;
+    ReadFrameAddress(m_full_unwind_plan_sp->GetRegisterKind(),
+                     active_row->GetAFAValue(), m_afa);
     PropagateTrapHandlerFlagFromUnwindPlan(m_full_unwind_plan_sp);
     m_registers.clear();
     if (Log *log = GetLog(LLDBLog::Unwind)) {
       UNWIND_LOG(
           log, "Replacing Full Unwindplan with Architecture UnwindPlan, '{0}'",
           m_full_unwind_plan_sp->GetSourceName());
-      const UnwindPlan::Row *active_row =
-          m_full_unwind_plan_sp->GetRowForFunctionOffset(m_current_offset);
       if (active_row) {
         StreamString active_row_strm;
         active_row->Dump(active_row_strm, m_full_unwind_plan_sp.get(),

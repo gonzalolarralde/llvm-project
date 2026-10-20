@@ -1,0 +1,28 @@
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+  Machine: EM_XTENSA
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address: 0x40000000
+    Content: "364100000000000000000000000000000000000000000000000000000000000036410000000000000000000000000000000000000000000000000000000000003641000000000000000000000000000000000000000000000000000000000000"
+Symbols:
+  - Name: leaf
+    Type: STT_FUNC
+    Section: .text
+    Value: 0x40000000
+    Size: 32
+  - Name: caller
+    Type: STT_FUNC
+    Section: .text
+    Value: 0x40000020
+    Size: 32
+  - Name: root
+    Type: STT_FUNC
+    Section: .text
+    Value: 0x40000040
+    Size: 32
