@@ -1,0 +1,9 @@
+add_lldb_unittest(ABIXtensaTests
+  ABIXtensaTest.cpp
+  LINK_COMPONENTS
+    Support
+    Xtensa
+  LINK_LIBS
+    lldbTarget
+    lldbPluginABIXtensa
+  )

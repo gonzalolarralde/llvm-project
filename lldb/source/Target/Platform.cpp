@@ -2159,6 +2159,12 @@ llvm::ArrayRef<uint8_t> Platform::SoftwareTrapOpcodeBytes(const ArchSpec &arch,
         llvm::ArrayRef<uint8_t>(g_loongarch_opcode, sizeof(g_loongarch_opcode));
   } break;
 
+  case llvm::Triple::xtensa: {
+    // BREAK.N 0 fits both the 16-bit density and 24-bit base instructions.
+    static const uint8_t g_xtensa_opcode[] = {0x2d, 0xf0};
+    trap_opcode = llvm::ArrayRef<uint8_t>(g_xtensa_opcode);
+  } break;
+
   // Unreachable (0x00) triggers an unconditional trap.
   case llvm::Triple::wasm32: {
     static const uint8_t g_wasm_opcode[] = {0x00};
