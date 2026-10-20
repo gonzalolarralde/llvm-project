@@ -265,6 +265,8 @@ static MCRegisterInfo *createXtensaMCRegisterInfo(const Triple &TT) {
 
 static MCSubtargetInfo *
 createXtensaMCSubtargetInfo(const Triple &TT, StringRef CPU, StringRef FS) {
+  if (CPU.empty() && TT.getVendorName() == "esp32s3")
+    CPU = "esp32s3";
   return createXtensaMCSubtargetInfoImpl(TT, CPU, CPU, FS);
 }
 

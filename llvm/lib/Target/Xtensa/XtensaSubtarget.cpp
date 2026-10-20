@@ -28,7 +28,7 @@ XtensaSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS) {
   StringRef CPUName = CPU;
   if (CPUName.empty()) {
     // set default cpu name
-    CPUName = "generic";
+    CPUName = TargetTriple.getVendorName() == "esp32s3" ? "esp32s3" : "generic";
   }
 
   // Parse features string.
