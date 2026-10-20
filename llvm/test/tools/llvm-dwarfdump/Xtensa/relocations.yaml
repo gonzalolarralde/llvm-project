@@ -1,0 +1,63 @@
+# RUN: yaml2obj %s -o %t.o
+# RUN: llvm-dwarfdump --debug-info %t.o 2>&1 | FileCheck %s --implicit-check-not=warning: --implicit-check-not=error:
+
+## Exercise Xtensa RELA relocations in DWARF, including nonzero symbol values,
+## positive and negative explicit addends, PC-relative values and 32-bit wrap.
+## The unrelocated fields contain 0x42: only R_XTENSA_NONE preserves that value.
+# CHECK:      DW_AT_high_pc (0x00000042)
+# CHECK-NEXT: DW_AT_high_pc (0x00001238)
+# CHECK-NEXT: DW_AT_high_pc (0xfffffffc)
+# CHECK-NEXT: DW_AT_high_pc (0xfffffff0)
+# CHECK-NEXT: DW_AT_high_pc (0x00000001)
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS32
+  Data: ELFDATA2LSB
+  Type: ET_REL
+  Machine: EM_XTENSA
+Sections:
+  - Name: .debug_abbrev
+    Type: SHT_PROGBITS
+    # Compile unit with five DW_AT_high_pc/DW_FORM_addr pairs.
+    Content: '01110012011201120112011201000000'
+  - Name: .debug_info
+    Type: SHT_PROGBITS
+    # DWARF v4, four-byte addresses, abbreviation 1, five address fields.
+    Content: '1c00000004000000000004014200000042000000420000004200000042000000'
+  - Name: .rela.debug_info
+    Type: SHT_RELA
+    Link: .symtab
+    Info: .debug_info
+    Relocations:
+      - Offset: 0x0c
+        Symbol: four
+        Type: R_XTENSA_NONE
+        Addend: 7
+      - Offset: 0x10
+        Symbol: address
+        Type: R_XTENSA_32
+        Addend: 4
+      - Offset: 0x14
+        Symbol: four
+        Type: R_XTENSA_32
+        Addend: -8
+      - Offset: 0x18
+        Symbol: four
+        Type: R_XTENSA_32_PCREL
+        Addend: 4
+      - Offset: 0x1c
+        Symbol: maximum
+        Type: R_XTENSA_32
+        Addend: 2
+Symbols:
+  - Name: four
+    Index: SHN_ABS
+    Value: 4
+  - Name: address
+    Index: SHN_ABS
+    Value: 0x1234
+  - Name: maximum
+    Index: SHN_ABS
+    Value: 0xffffffff
+...

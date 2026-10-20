@@ -541,6 +541,31 @@ static uint64_t resolveCSKY(uint64_t Type, uint64_t Offset, uint64_t S,
   }
 }
 
+static bool supportsXtensa(uint64_t Type) {
+  switch (Type) {
+  case ELF::R_XTENSA_NONE:
+  case ELF::R_XTENSA_32:
+  case ELF::R_XTENSA_32_PCREL:
+    return true;
+  default:
+    return false;
+  }
+}
+
+static uint64_t resolveXtensa(uint64_t Type, uint64_t Offset, uint64_t S,
+                              uint64_t LocData, int64_t Addend) {
+  switch (Type) {
+  case ELF::R_XTENSA_NONE:
+    return LocData;
+  case ELF::R_XTENSA_32:
+    return (S + Addend) & 0xFFFFFFFF;
+  case ELF::R_XTENSA_32_PCREL:
+    return (S + Addend - Offset) & 0xFFFFFFFF;
+  default:
+    llvm_unreachable("Invalid relocation type");
+  }
+}
+
 static bool supportsLoongArch(uint64_t Type) {
   switch (Type) {
   case ELF::R_LARCH_NONE:
@@ -883,6 +908,8 @@ getRelocationResolver(const ObjectFile &Obj) {
       return {supportsRISCV, resolveRISCV};
     case Triple::csky:
       return {supportsCSKY, resolveCSKY};
+    case Triple::xtensa:
+      return {supportsXtensa, resolveXtensa};
     default:
       if (isAMDGPU(Obj))
         return {supportsAmdgpu, resolveAmdgpu};
@@ -923,12 +950,14 @@ uint64_t resolveRelocation(RelocationResolver Resolver, const RelocationRef &R,
           GetRelSectionType() == ELF::SHT_CREL) {
         Addend = getELFAddend(R);
         // LoongArch and RISCV relocations use both LocData and Addend.
+        // Xtensa's R_XTENSA_NONE preserves LocData.
         if (Obj->getArch() != Triple::loongarch32 &&
             Obj->getArch() != Triple::loongarch64 &&
             Obj->getArch() != Triple::riscv32 &&
             Obj->getArch() != Triple::riscv64 &&
             Obj->getArch() != Triple::riscv32be &&
-            Obj->getArch() != Triple::riscv64be)
+            Obj->getArch() != Triple::riscv64be &&
+            Obj->getArch() != Triple::xtensa)
           LocData = 0;
       }
     }
