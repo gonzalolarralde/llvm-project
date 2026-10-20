@@ -63,9 +63,9 @@ XtensaTargetLowering::XtensaTargetLowering(const TargetMachine &TM,
     addRegisterClass(MVT::f32, &Xtensa::FPRRegClass);
   }
 
-  if (Subtarget.hasBoolean()) {
-    addRegisterClass(MVT::v1i1, &Xtensa::BRRegClass);
-  }
+  // Boolean registers are used explicitly by the floating-point comparison
+  // pseudos. They do not implement the loads, stores or vector operations
+  // required to make v1i1 a legal SelectionDAG type. Let vector masks scalarize.
 
   // Set up special registers.
   setStackPointerRegisterToSaveRestore(Xtensa::SP);
