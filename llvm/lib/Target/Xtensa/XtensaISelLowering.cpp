@@ -583,7 +583,15 @@ SDValue XtensaTargetLowering::LowerFormalArguments(
       // to the vararg save area.
       for (unsigned I = Idx; I < ArgRegsNum; ++I, VaArgOffset += RegSize) {
         const Register Reg = RegInfo.createVirtualRegister(RC);
-        RegInfo.addLiveIn(IntRegs[I], Reg);
+        MCRegister FrameReg = Subtarget.getRegisterInfo()->getFrameRegister(MF);
+        // The prologue replaces a7 with the frame pointer in the windowed ABI.
+        // Preserve an unnamed argument in a7 just as for named arguments above.
+        if (Subtarget.isWindowedABI() && IntRegs[I] == FrameReg) {
+          RegInfo.addLiveIn(Xtensa::A8, Reg);
+          XtensaFI->setSaveFrameRegister();
+        } else {
+          RegInfo.addLiveIn(IntRegs[I], Reg);
+        }
 
         SDValue ArgValue = DAG.getCopyFromReg(Chain, DL, Reg, RegTy);
         FI = MFI.CreateFixedObject(RegSize, VaArgOffset, true);
@@ -1241,28 +1249,39 @@ SDValue XtensaTargetLowering::LowerVASTART(SDValue Op,
   // next variable argument
 
   SDValue VAIndex;
+  SDValue OverflowPtrAdvance;
+  SDValue RegSavePtr = DAG.getConstant(0, DL, PtrVT);
   SDValue StackOffsetFI =
       DAG.getFrameIndex(XtensaFI->getVarArgsOnStackFrameIndex(), PtrVT);
   unsigned ArgWords = XtensaFI->getVarArgsFirstGPR() - 2;
 
-  // If first variable argument passed in registers (maximum words in registers
-  // is 6) then set va_ndx to the position of this argument in registers area
-  // stored in memory (va_reg pointer). Otherwise va_ndx should point to the
-  // position of the first variable argument on stack (va_stk pointer).
+  // va_ndx is measured from the beginning of the six-register argument area,
+  // while the frame object starts at the first *unnamed* argument. Account for
+  // named arguments in va_reg or va_arg will skip them a second time.
   if (ArgWords < 6) {
     VAIndex = DAG.getConstant(ArgWords * 4, DL, MVT::i32);
+    OverflowPtrAdvance = DAG.getConstant(32, DL, PtrVT);
+    SDValue FrameIndex =
+        DAG.getFrameIndex(XtensaFI->getVarArgsInRegsFrameIndex(), PtrVT);
+    RegSavePtr = DAG.getNode(ISD::SUB, DL, PtrVT, FrameIndex,
+                            DAG.getConstant(ArgWords * 4, DL, PtrVT));
   } else {
-    VAIndex = DAG.getConstant(32, DL, MVT::i32);
+    // Keep va_stk aligned to the ABI stack boundary even when named arguments
+    // have consumed an odd number of stack words. va_arg aligns va_ndx before
+    // accessing doubles and 64-bit integers.
+    OverflowPtrAdvance = DAG.getNode(ISD::AND, DL, PtrVT, StackOffsetFI,
+                                    DAG.getConstant(15, DL, PtrVT));
+    OverflowPtrAdvance = DAG.getNode(ISD::ADD, DL, PtrVT, OverflowPtrAdvance,
+                                    DAG.getConstant(32, DL, PtrVT));
+    VAIndex = OverflowPtrAdvance;
   }
 
-  SDValue FrameIndex =
-      DAG.getFrameIndex(XtensaFI->getVarArgsInRegsFrameIndex(), PtrVT);
   uint64_t FrameOffset = PtrVT.getStoreSize();
   const Value *SV = cast<SrcValueSDNode>(Op.getOperand(2))->getValue();
 
   // Store pointer to arguments given on stack (va_stk)
-  SDValue StackPtr = DAG.getNode(ISD::SUB, DL, PtrVT, StackOffsetFI,
-                                 DAG.getConstant(32, DL, PtrVT));
+  SDValue StackPtr =
+      DAG.getNode(ISD::SUB, DL, PtrVT, StackOffsetFI, OverflowPtrAdvance);
 
   SDValue StoreStackPtr =
       DAG.getStore(Chain, DL, StackPtr, Addr, MachinePointerInfo(SV));
@@ -1272,7 +1291,7 @@ SDValue XtensaTargetLowering::LowerVASTART(SDValue Op,
       DAG.getObjectPtrOffset(DL, Addr, TypeSize::getFixed(NextOffset));
 
   // Store pointer to arguments given on registers (va_reg)
-  SDValue StoreRegPtr = DAG.getStore(StoreStackPtr, DL, FrameIndex, NextPtr,
+  SDValue StoreRegPtr = DAG.getStore(StoreStackPtr, DL, RegSavePtr, NextPtr,
                                      MachinePointerInfo(SV, NextOffset));
   NextOffset += FrameOffset;
   NextPtr = DAG.getObjectPtrOffset(DL, Addr, TypeSize::getFixed(NextOffset));
