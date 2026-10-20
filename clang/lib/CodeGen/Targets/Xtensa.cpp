@@ -91,9 +91,9 @@ ABIArgInfo XtensaABIInfo::classifyArgumentType(QualType Ty, int &ArgGPRsLeft,
   ArgGPRsLeft -= NeededArgGPRs;
 
   if (!isAggregateTypeForABI(Ty) && !Ty->isVectorType() && !MustUseStack) {
-    // Pointers retain their LLVM pointer type. In particular, Swift runtime
-    // entry points call allocation hooks with pointers, not coerced integers.
-    if (Ty->isPointerType() || Ty->isBlockPointerType())
+    // Pointers and C++ references retain their LLVM pointer type. Reference
+    // parameters carry pointer-only attributes such as nonnull and dereferenceable.
+    if (Ty->isPointerType() || Ty->isBlockPointerType() || Ty->isReferenceType())
       return ABIArgInfo::getDirect();
     // Treat an enum type as its underlying type.
     if (const auto *ED = Ty->getAsEnumDecl())
