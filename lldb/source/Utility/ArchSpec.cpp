@@ -269,6 +269,9 @@ static constexpr const CoreDefinition g_core_definitions[] = {
      ArchSpec::eCore_uknownMach64, "unknown-mach-64"},
     {eByteOrderLittle, 4, 2, 4, llvm::Triple::arc, ArchSpec::eCore_arc, "arc"},
 
+    {eByteOrderLittle, 4, 2, 3, llvm::Triple::xtensa, ArchSpec::eCore_xtensa,
+     "xtensa"},
+
     {eByteOrderLittle, 2, 2, 4, llvm::Triple::avr, ArchSpec::eCore_avr, "avr"},
 
     {eByteOrderLittle, 4, 1, 4, llvm::Triple::wasm32, ArchSpec::eCore_wasm32,
@@ -521,6 +524,7 @@ static const ArchDefinitionEntry g_elf_arch_entries[] = {
     {ArchSpec::eCore_msp430,          llvm::ELF::EM_MSP430      }, // MSP430
     {ArchSpec::eCore_hexagon_generic, llvm::ELF::EM_HEXAGON     }, // HEXAGON
     {ArchSpec::eCore_arc,             llvm::ELF::EM_ARC_COMPACT2}, // ARC
+    {ArchSpec::eCore_xtensa,          llvm::ELF::EM_XTENSA      }, // Xtensa
     {ArchSpec::eCore_avr,             llvm::ELF::EM_AVR         }, // AVR
     {ArchSpec::eCore_riscv32,         llvm::ELF::EM_RISCV,      ArchSpec::eRISCVSubType_riscv32}, // riscv32
     {ArchSpec::eCore_riscv64,         llvm::ELF::EM_RISCV,      ArchSpec::eRISCVSubType_riscv64}, // riscv64

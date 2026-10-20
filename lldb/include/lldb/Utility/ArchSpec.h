@@ -238,6 +238,8 @@ public:
 
     eCore_arc, // little endian ARC
 
+    eCore_xtensa,
+
     eCore_avr,
 
     eCore_wasm32,

@@ -16,6 +16,22 @@
 using namespace lldb;
 using namespace lldb_private;
 
+TEST(ArchSpecTest, Xtensa) {
+  ArchSpec triple("xtensa-unknown-none-elf");
+  ASSERT_TRUE(triple.IsValid());
+  EXPECT_EQ(ArchSpec::eCore_xtensa, triple.GetCore());
+  EXPECT_EQ(llvm::Triple::xtensa, triple.GetMachine());
+  EXPECT_EQ(eByteOrderLittle, triple.GetByteOrder());
+  EXPECT_EQ(4u, triple.GetAddressByteSize());
+  EXPECT_EQ(2u, triple.GetMinimumOpcodeByteSize());
+  EXPECT_EQ(3u, triple.GetMaximumOpcodeByteSize());
+
+  ArchSpec elf(eArchTypeELF, llvm::ELF::EM_XTENSA, LLDB_INVALID_CPUTYPE);
+  ASSERT_TRUE(elf.IsValid());
+  EXPECT_EQ(ArchSpec::eCore_xtensa, elf.GetCore());
+  EXPECT_TRUE(triple.IsCompatibleMatch(elf));
+}
+
 TEST(ArchSpecTest, TestParseMachCPUDashSubtypeTripleSimple) {
 
   // Success conditions.  Valid cpu/subtype combinations using both - and .
