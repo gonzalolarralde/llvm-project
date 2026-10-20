@@ -441,7 +441,12 @@ bool ThreadPlanStepOut::ShouldStop(Event *event_ptr) {
     StopInfoSP stop_info_sp = GetPrivateStopInfo();
     if (stop_info_sp && stop_info_sp->GetStopReason() == eStopReasonBreakpoint) {
       StackID frame_zero_id = GetThread().GetStackFrameAtIndex(0)->GetStackID();
-      done = !(frame_zero_id.IsYoungerThan(m_step_out_to_id, m_process));
+      // The return address can enter an inlined scope that is younger than
+      // the caller's scope at the call instruction. We have still returned
+      // from the physical callee. Match DoPlanExplainsStop so a rejected
+      // stopping point (for example line zero) gets a further stepping plan.
+      done = !frame_zero_id.IsYoungerThan(m_step_out_to_id, m_process) ||
+             m_immediate_step_from_id.IsYoungerThan(frame_zero_id, m_process);
     }
   }
 
