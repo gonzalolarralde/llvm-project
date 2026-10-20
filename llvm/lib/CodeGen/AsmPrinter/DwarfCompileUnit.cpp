@@ -1927,9 +1927,10 @@ void DwarfCompileUnit::createBaseTypeDIEs() {
     DIE &Die = getUnitDie().addChildFront(
       DIE::get(DIEValueAllocator, dwarf::DW_TAG_base_type));
     SmallString<32> Str;
-    addString(Die, dwarf::DW_AT_name,
-              Twine(dwarf::AttributeEncodingString(Btr.Encoding) +
-                    "_" + Twine(Btr.BitSize)).toStringRef(Str));
+    StringRef Name = Twine(dwarf::AttributeEncodingString(Btr.Encoding) + "_" +
+                           Twine(Btr.BitSize)).toStringRef(Str);
+    addString(Die, dwarf::DW_AT_name, Name);
+    DD->addAccelType(*this, CUNode->getNameTableKind(), Name, Die, 0);
     addUInt(Die, dwarf::DW_AT_encoding, dwarf::DW_FORM_data1, Btr.Encoding);
     // Round up to smallest number of bytes that contains this number of bits.
     // ExprRefedBaseTypes is populated with types referenced by
