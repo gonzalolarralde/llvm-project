@@ -368,7 +368,11 @@ void XtensaFrameLowering::processFunctionBeforeFrameFinalized(
   auto *XtensaFI = MF.getInfo<XtensaMachineFunctionInfo>();
   unsigned ScavSlotsNum = 0;
 
-  if (!isInt<12>(MaxSPOffset))
+  // Frame-address materialization (LEA_ADD) has a signed 8-bit offset,
+  // narrower than MOVI's 12-bit immediate or the scaled load/store offsets.
+  // Include the window-save area added by emitPrologue when deciding whether
+  // scavenging may need an emergency slot under register pressure.
+  if (!isInt<8>(MaxSPOffset + (STI.isWindowedABI() ? 32 : 0)))
     ScavSlotsNum = 1;
 
   // Far branches over 18-bit offset require a spill slot for scratch register.
