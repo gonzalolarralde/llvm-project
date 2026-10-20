@@ -14,6 +14,7 @@
 #include "XtensaTargetStreamer.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/MC/MCAsmInfo.h"
+#include "llvm/MC/MCDwarf.h"
 #include "llvm/MC/MCInstrInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCStreamer.h"
@@ -240,6 +241,8 @@ static MCAsmInfo *createXtensaMCAsmInfo(const MCRegisterInfo &MRI,
                                         const Triple &TT,
                                         const MCTargetOptions &Options) {
   MCAsmInfo *MAI = new XtensaMCAsmInfo(TT, Options);
+  unsigned SP = MRI.getDwarfRegNum(Xtensa::SP, true);
+  MAI->addInitialFrameState(MCCFIInstruction::cfiDefCfa(nullptr, SP, 0));
   return MAI;
 }
 
@@ -259,7 +262,7 @@ static MCInstPrinter *createXtensaMCInstPrinter(const Triple &TT,
 
 static MCRegisterInfo *createXtensaMCRegisterInfo(const Triple &TT) {
   MCRegisterInfo *X = new MCRegisterInfo();
-  InitXtensaMCRegisterInfo(X, Xtensa::SP);
+  InitXtensaMCRegisterInfo(X, Xtensa::A0);
   return X;
 }
 
