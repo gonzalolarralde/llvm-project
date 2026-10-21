@@ -1392,30 +1392,10 @@ Status ProcessGDBRemote::DoResume(RunDirection direction) {
       } else {
         continue_packet.PutCString("vCont");
 
-        if (!m_continue_c_tids.empty()) {
-          if (m_gdb_comm.GetVContSupported("c")) {
-            for (tid_collection::const_iterator
-                     t_pos = m_continue_c_tids.begin(),
-                     t_end = m_continue_c_tids.end();
-                 t_pos != t_end; ++t_pos)
-              continue_packet.Format(";c:{0}{1:x-}", pid_prefix, *t_pos);
-          } else
-            continue_packet_error = true;
-        }
-
-        if (!continue_packet_error && !m_continue_C_tids.empty()) {
-          if (m_gdb_comm.GetVContSupported("C")) {
-            for (tid_sig_collection::const_iterator
-                     s_pos = m_continue_C_tids.begin(),
-                     s_end = m_continue_C_tids.end();
-                 s_pos != s_end; ++s_pos)
-              continue_packet.Format(";C{0:x-2}:{1}{2:x-}", s_pos->second,
-                                     pid_prefix, s_pos->first);
-          } else
-            continue_packet_error = true;
-        }
-
-        if (!continue_packet_error && !m_continue_s_tids.empty()) {
+        // Put step actions first for servers such as OpenOCD that use the
+        // first action to decide whether to step or resume. Each action names
+        // a distinct thread, so this order preserves the requested behavior.
+        if (!m_continue_s_tids.empty()) {
           if (m_gdb_comm.GetVContSupported("s")) {
             for (tid_collection::const_iterator
                      t_pos = m_continue_s_tids.begin(),
@@ -1433,6 +1413,29 @@ Status ProcessGDBRemote::DoResume(RunDirection direction) {
                      s_end = m_continue_S_tids.end();
                  s_pos != s_end; ++s_pos)
               continue_packet.Format(";S{0:x-2}:{1}{2:x-}", s_pos->second,
+                                     pid_prefix, s_pos->first);
+          } else
+            continue_packet_error = true;
+        }
+
+        if (!continue_packet_error && !m_continue_c_tids.empty()) {
+          if (m_gdb_comm.GetVContSupported("c")) {
+            for (tid_collection::const_iterator
+                     t_pos = m_continue_c_tids.begin(),
+                     t_end = m_continue_c_tids.end();
+                 t_pos != t_end; ++t_pos)
+              continue_packet.Format(";c:{0}{1:x-}", pid_prefix, *t_pos);
+          } else
+            continue_packet_error = true;
+        }
+
+        if (!continue_packet_error && !m_continue_C_tids.empty()) {
+          if (m_gdb_comm.GetVContSupported("C")) {
+            for (tid_sig_collection::const_iterator
+                     s_pos = m_continue_C_tids.begin(),
+                     s_end = m_continue_C_tids.end();
+                 s_pos != s_end; ++s_pos)
+              continue_packet.Format(";C{0:x-2}:{1}{2:x-}", s_pos->second,
                                      pid_prefix, s_pos->first);
           } else
             continue_packet_error = true;
