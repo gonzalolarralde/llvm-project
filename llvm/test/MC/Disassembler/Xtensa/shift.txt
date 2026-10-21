@@ -1,0 +1,11 @@
+# RUN: not llvm-mc -triple=xtensa -disassemble %s 2>&1 | FileCheck %s
+
+# Encodings at either valid boundary remain accepted.
+[0xf0,0x51,0x11]
+# CHECK-DAG: slli a5, a1, 1
+[0x10,0x51,0x01]
+# CHECK-DAG: slli a5, a1, 31
+
+# The all-zero immediate field is reserved, not a shift by 32.
+[0x00,0x51,0x01]
+# CHECK-DAG: warning: invalid instruction encoding

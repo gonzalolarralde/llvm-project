@@ -1,0 +1,11 @@
+# RUN: llvm-mc -triple=xtensa -disassemble %s | FileCheck %s
+
+# Full signed literal range, including the middle that a 17-bit extension loses.
+[0x21,0x00,0x00]
+# CHECK: l32r a2, . -262144
+[0x21,0xff,0x7f]
+# CHECK: l32r a2, . -131076
+[0x21,0x00,0x80]
+# CHECK: l32r a2, . -131072
+[0x21,0xff,0xff]
+# CHECK: l32r a2, . -4

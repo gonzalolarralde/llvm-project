@@ -1,0 +1,12 @@
+# RUN: llvm-mc -triple=xtensa -disassemble %s | FileCheck %s
+
+[0x22,0xd3,0x00]
+# CHECK: addmi a2, a3, 0
+[0x22,0xd3,0x01]
+# CHECK: addmi a2, a3, 256
+[0x22,0xd3,0x7f]
+# CHECK: addmi a2, a3, 32512
+[0x22,0xd3,0x80]
+# CHECK: addmi a2, a3, -32768
+[0x22,0xd3,0xff]
+# CHECK: addmi a2, a3, -256

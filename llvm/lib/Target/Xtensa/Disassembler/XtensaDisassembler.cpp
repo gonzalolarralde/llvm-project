@@ -287,7 +287,7 @@ static DecodeStatus decodeL32ROperand(MCInst &Inst, uint64_t Imm,
 
   assert(isUInt<16>(Imm) && "Invalid immediate");
   Inst.addOperand(MCOperand::createImm(
-      SignExtend64<17>((Imm << 2) + 0x40000 + (Address & 0x3))));
+      SignExtend64<19>((Imm << 2) + 0x40000 + (Address & 0x3))));
   return MCDisassembler::Success;
 }
 
@@ -301,8 +301,9 @@ static DecodeStatus decodeImm8Operand(MCInst &Inst, uint64_t Imm,
 static DecodeStatus decodeImm8_sh8Operand(MCInst &Inst, uint64_t Imm,
                                           int64_t Address,
                                           const void *Decoder) {
-  assert(isUInt<8>(Imm) && "Invalid immediate");
-  Inst.addOperand(MCOperand::createImm(SignExtend64<16>(Imm << 8)));
+  // TableGen reconstructs imm_sh8{15-8} in its original bit positions.
+  assert(isUInt<16>(Imm) && (Imm & 0xff) == 0 && "Invalid immediate");
+  Inst.addOperand(MCOperand::createImm(SignExtend64<16>(Imm)));
   return MCDisassembler::Success;
 }
 
@@ -383,6 +384,10 @@ static DecodeStatus decodeShimm1_31Operand(MCInst &Inst, uint64_t Imm,
                                            int64_t Address,
                                            const void *Decoder) {
   assert(isUInt<5>(Imm) && "Invalid immediate");
+  // The all-zero field would mean a shift of 32, which is reserved. Do not
+  // manufacture an operand that the instruction printer cannot represent.
+  if (Imm == 0)
+    return MCDisassembler::Fail;
   Inst.addOperand(MCOperand::createImm(32 - Imm));
   return MCDisassembler::Success;
 }
