@@ -1839,7 +1839,9 @@ unsigned DWARFLinker::DIECloner::cloneScalarAttribute(
   assert((Info.HasRanges || (OriginalForm != dwarf::DW_FORM_rnglistx)) &&
          "Unhandled DW_FORM_rnglistx attribute");
 
-  return AttrSize;
+  // A rewritten scalar can cross a ULEB/SLEB boundary, so its original encoded
+  // size need not match the bytes that DIEInteger will emit.
+  return Patch->sizeOf(Unit.getOrigUnit().getFormParams());
 }
 
 /// Clone \p InputDIE's attribute described by \p AttrSpec with
