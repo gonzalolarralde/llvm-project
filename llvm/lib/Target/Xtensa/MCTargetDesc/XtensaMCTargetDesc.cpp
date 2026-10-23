@@ -220,6 +220,7 @@ bool Xtensa::checkRegister(MCRegister RegNo, const FeatureBitset &FeatureBits,
   case Xtensa::QACC_L_3:
   case Xtensa::QACC_L_4:
   case Xtensa::GPIO_OUT_S3:
+  case Xtensa::SAR_BYTE:
   case Xtensa::FFT_BIT_WIDTH:
   case Xtensa::UA_STATE_0:
   case Xtensa::UA_STATE_1:
@@ -234,7 +235,8 @@ bool Xtensa::checkRegister(MCRegister RegNo, const FeatureBitset &FeatureBits,
 }
 
 // Get Xtensa User Register by encoding value.
-MCRegister Xtensa::getUserRegister(unsigned Code, const MCRegisterInfo &MRI) {
+MCRegister Xtensa::getUserRegister(unsigned Code, const MCRegisterInfo &MRI,
+                                   const FeatureBitset &FeatureBits) {
   MCRegister UserReg = Xtensa::NoRegister;
 
   if (MRI.getEncodingValue(Xtensa::FCR) == Code) {
@@ -249,7 +251,10 @@ MCRegister Xtensa::getUserRegister(unsigned Code, const MCRegisterInfo &MRI) {
     UserReg = Xtensa::F64S;
   } else if (MRI.getEncodingValue(Xtensa::THREADPTR) == Code) {
     UserReg = Xtensa::THREADPTR;
-  } else if (MRI.getEncodingValue(Xtensa::GPIO_OUT_S2) == Code) {
+  } else if (MRI.getEncodingValue(Xtensa::GPIO_OUT_S2) == Code &&
+             !FeatureBits[Xtensa::FeatureESP32S3Ops]) {
+    // S2 GPIO_OUT and S3 ACCX_0 share encoding zero. Select the register
+    // using the CPU features before the caller checks its availability.
     UserReg = Xtensa::GPIO_OUT_S2;
   } else if (MRI.getEncodingValue(Xtensa::GPIO_OUT_S3) == Code) {
     UserReg = Xtensa::GPIO_OUT_S3;

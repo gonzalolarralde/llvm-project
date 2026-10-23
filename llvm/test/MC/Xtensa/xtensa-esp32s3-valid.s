@@ -1,6 +1,12 @@
 # RUN: llvm-mc %s -triple=xtensa  -mcpu=esp32s3 -show-encoding \
 # RUN:     | FileCheck -check-prefixes=CHECK,CHECK-INST %s
 
+# Roundtrip every upstream S3 instruction through the disassembler and emitter.
+# RUN: llvm-mc %s -triple=xtensa -mcpu=esp32s3 -show-encoding \
+# RUN:   | sed -n 's/.*encoding: //p' \
+# RUN:   | llvm-mc -triple=xtensa -mcpu=esp32s3 -disassemble -show-encoding \
+# RUN:   | FileCheck -check-prefixes=CHECK,CHECK-INST %s
+
 .align	4
 
 LBL0:

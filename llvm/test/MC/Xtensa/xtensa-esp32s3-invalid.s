@@ -18,8 +18,9 @@ ee.fft.r2bf.s16.st.incp q7, q3, q7, a2, 4
 ee.ldxq.32 q2, q6, a11, 2, 9
 # CHECK: :[[#@LINE-1]]:28: error: expected immediate in range [0, 7]
 
-# Select_16
-ee.slci.2q q7, q4, 17
+# Select_16: reject the first value outside the four-bit field without
+# reaching the code emitter assertion.
+ee.slci.2q q7, q4, 16
 # CHECK: :[[#@LINE-1]]:20: error: expected immediate in range [0, 15]
 
 # Select_256

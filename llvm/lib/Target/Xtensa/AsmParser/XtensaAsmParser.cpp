@@ -291,7 +291,7 @@ public:
 
   bool isSelect_8() const { return isImm(0, 7); }
 
-  bool isSelect_16() const { return isImm(0, 16); }
+  bool isSelect_16() const { return isImm(0, 15); }
 
   bool isSelect_256() const { return isImm(0, 255); }
 
@@ -662,9 +662,10 @@ MCRegister XtensaAsmParser::getRegisterByName(StringRef RegName) {
   if (RegNo == 0)
     RegNo = MatchRegisterAltName(RegName);
 
-  if (RegNo == Xtensa::GPIO_OUT_S2 &&
-      getSTI().getFeatureBits()[Xtensa::FeatureESP32S3Ops])
-    RegNo = Xtensa::GPIO_OUT_S3;
+  if (RegNo == Xtensa::GPIO_OUT_S2 || RegNo == Xtensa::GPIO_OUT_S3)
+    RegNo = getSTI().getFeatureBits()[Xtensa::FeatureESP32S3Ops]
+                ? Xtensa::GPIO_OUT_S3
+                : Xtensa::GPIO_OUT_S2;
 
   return RegNo;
 }
@@ -719,7 +720,7 @@ ParseStatus XtensaAsmParser::parseRegister(OperandVector &Operands,
     // and such situation may lead to confilct
     if (RegType == Xtensa_UR) {
       int64_t RegCode = getLexer().getTok().getIntVal();
-      RegNo = Xtensa::getUserRegister(RegCode, MRI);
+      RegNo = Xtensa::getUserRegister(RegCode, MRI, getSTI().getFeatureBits());
     } else {
       RegName = getLexer().getTok().getString();
       RegNo = MatchRegisterAltName(RegName);
