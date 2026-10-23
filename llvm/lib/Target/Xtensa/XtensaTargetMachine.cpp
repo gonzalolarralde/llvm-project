@@ -18,6 +18,7 @@
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
+#include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/PassRegistry.h"
 #include "llvm/Transforms/Scalar.h"
@@ -70,8 +71,26 @@ XtensaTargetMachine::getSubtargetImpl(const Function &F) const {
   auto FS = FSAttr.isValid() ? FSAttr.getValueAsString().str() : TargetFS;
 
   auto &I = SubtargetMap[CPU + FS];
-  if (!I)
+  if (!I) {
+    bool IsS3 = TargetTriple.getVendorName() == "esp32s3";
+    if (IsS3 && !CPU.empty() && CPU != "esp32s3") {
+      F.getContext().emitError("CPU '" + CPU +
+                              "' is not supported for target '" +
+                              TargetTriple.str() + "'");
+      // Diagnostic handlers may accumulate errors instead of terminating.
+      // Keep their remaining pipeline on the target's valid application ABI.
+      CPU = "esp32s3";
+    }
     I = std::make_unique<XtensaSubtarget>(TargetTriple, CPU, FS, *this);
+    if (IsS3 && !I->isWindowedABI()) {
+      F.getContext().emitError("ABI 'call0' is not supported for target '" +
+                              TargetTriple.str() + "'");
+      // Check the parsed subtarget so repeated features retain last-wins
+      // behavior. Instruction-only overrides such as -s32c1i remain valid.
+      FS += FS.empty() ? "+windowed" : ",+windowed";
+      I = std::make_unique<XtensaSubtarget>(TargetTriple, CPU, FS, *this);
+    }
+  }
   return I.get();
 }
 

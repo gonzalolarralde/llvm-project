@@ -101,6 +101,14 @@ static std::vector<Desc> getOpDescriptions() {
   Descriptions[DW_OP_GNU_addr_index] = Desc(Op::Dwarf4, Op::SizeLEB);
   Descriptions[DW_OP_GNU_const_index] = Desc(Op::Dwarf4, Op::SizeLEB);
   Descriptions[DW_OP_GNU_entry_value] = Desc(Op::Dwarf4, Op::SizeLEB);
+  Descriptions[DW_OP_GNU_regval_type] =
+      Desc(Op::Dwarf4, Op::SizeLEB, Op::BaseTypeRef);
+  Descriptions[DW_OP_GNU_deref_type] =
+      Desc(Op::Dwarf4, Op::Size1, Op::BaseTypeRef);
+  Descriptions[DW_OP_GNU_convert] = Desc(Op::Dwarf4, Op::BaseTypeRef);
+  // GNU_parameter_ref is a four-byte CU-relative DIE offset in both formats.
+  Descriptions[DW_OP_GNU_parameter_ref] = Desc(Op::Dwarf4, Op::Size4);
+  Descriptions[DW_OP_APPLE_uninit] = Desc(Op::Dwarf4);
   Descriptions[DW_OP_GNU_implicit_pointer] =
       Desc(Op::Dwarf4, Op::SizeRefAddr, Op::SignedSizeLEB);
   // This Description acts as a marker that getSubOpDesc must be called
@@ -171,6 +179,7 @@ bool DWARFExpression::Operation::extract(DataExtractor Data,
   for (unsigned Operand = 0; Operand < Desc.Op.size(); ++Operand) {
     unsigned Size = Desc.Op[Operand];
     unsigned Signed = Size & Operation::SignBit;
+    const uint64_t OperandStart = Offset;
 
     switch (Size & ~Operation::SignBit) {
     case Operation::SizeSubOpLEB:
@@ -240,6 +249,8 @@ bool DWARFExpression::Operation::extract(DataExtractor Data,
       // We need a size, so this cannot be the first operand
       if (Operand == 0)
         return false;
+      if (!Data.isValidOffsetForDataOfSize(Offset, Operands[Operand - 1]))
+        return false;
       // Store the offset of the block as the value.
       Operands[Operand] = Offset;
       Offset += Operands[Operand - 1];
@@ -248,6 +259,12 @@ bool DWARFExpression::Operation::extract(DataExtractor Data,
       llvm_unreachable("Unknown DWARFExpression Op size");
     }
 
+    // DataExtractor leaves the offset unchanged on an unsuccessful read.
+    // In particular, a missing typed-conversion operand must not be mistaken
+    // for the valid generic type operand zero. Empty blocks are allowed.
+    if ((Size & ~Operation::SignBit) != Operation::SizeBlock &&
+        Offset == OperandStart)
+      return false;
     OperandEndOffsets[Operand] = Offset;
   }
 

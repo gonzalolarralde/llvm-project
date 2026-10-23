@@ -28,6 +28,11 @@ class XtensaMachineFunctionInfo : public MachineFunctionInfo {
   int VarArgsOnStackFrameIndex;
   int VarArgsInRegsFrameIndex;
   bool SaveFrameRegister = false;
+  bool SaveBaseRegister = false;
+  // Computed with the actual calling convention before formal arguments are
+  // lowered, so the prologue can preserve a6/a7 before installing FP/BP.
+  bool HasLargeCallFrame = false;
+  unsigned IncomingStackBytes = 0;
   unsigned CPLabelId = 0;
 
 public:
@@ -55,6 +60,15 @@ public:
 
   bool isSaveFrameRegister() const { return SaveFrameRegister; }
   void setSaveFrameRegister() { SaveFrameRegister = true; }
+
+  bool isSaveBaseRegister() const { return SaveBaseRegister; }
+  void setSaveBaseRegister() { SaveBaseRegister = true; }
+
+  bool hasLargeCallFrame() const { return HasLargeCallFrame; }
+  void setHasLargeCallFrame(bool Value) { HasLargeCallFrame = Value; }
+
+  unsigned getIncomingStackBytes() const { return IncomingStackBytes; }
+  void setIncomingStackBytes(unsigned Bytes) { IncomingStackBytes = Bytes; }
 
   unsigned createCPLabelId() { return CPLabelId++; }
 };

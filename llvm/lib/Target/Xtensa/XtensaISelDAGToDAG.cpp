@@ -15,8 +15,10 @@
 #include "XtensaSelectionDAGInfo.h"
 #include "XtensaTargetMachine.h"
 #include "llvm/CodeGen/MachineFunction.h"
+#include "llvm/CodeGen/MachineMemOperand.h"
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/SelectionDAGISel.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/DiagnosticInfo.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/raw_ostream.h"
@@ -145,6 +147,28 @@ void XtensaDAGToDAGISel::Select(SDNode *Node) {
   }
 
   switch (Node->getOpcode()) {
+  case ISD::Constant: {
+    auto *C = cast<ConstantSDNode>(Node);
+    if (VT != MVT::i32 || C->getAPIntValue().isSignedIntN(12))
+      break;
+
+    // Legalization can leave an ADDMI immediate in the DAG, but selection may
+    // fold its ADD into ADDX2/4/8, which needs the constant in a register. Also
+    // handle constants formed after legalization: every i32 constant that
+    // remains a register operand must have a materialization here.
+    SDValue CP = CurDAG->getTargetConstantPool(
+        ConstantInt::get(*CurDAG->getContext(), C->getAPIntValue()), MVT::i32,
+        Align(4));
+    auto *Load = CurDAG->getMachineNode(Xtensa::L32R, DL, MVT::i32, MVT::Other,
+                                      CP, CurDAG->getEntryNode());
+    MachineFunction &MF = CurDAG->getMachineFunction();
+    MachineMemOperand *MemOp = MF.getMachineMemOperand(
+        MachinePointerInfo::getConstantPool(MF), MachineMemOperand::MOLoad, 4,
+        Align(4));
+    CurDAG->setNodeMemRefs(Load, {MemOp});
+    ReplaceNode(Node, Load);
+    return;
+  }
   case ISD::SHL: {
     SDValue N0 = Node->getOperand(0);
     SDValue N1 = Node->getOperand(1);

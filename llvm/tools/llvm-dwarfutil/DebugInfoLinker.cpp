@@ -14,6 +14,7 @@
 #include "llvm/DWARFLinker/Parallel/DWARFLinker.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/DebugInfo/DWARF/LowLevel/DWARFExpression.h"
+#include "llvm/Object/ELFObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/ThreadPool.h"
@@ -48,15 +49,17 @@ public:
   ObjFileAddressMap(DWARFContext &Context, const Options &Options,
                     object::ObjectFile &ObjFile)
       : Opts(Options) {
-    // Remember addresses of existing text sections.
+    // Code scopes must refer to executable sections. Location expressions can
+    // also refer to live data, including read-only data and zero-filled BSS.
     for (const object::SectionRef &Sect : ObjFile.sections()) {
-      if (!Sect.isText())
-        continue;
       const uint64_t Size = Sect.getSize();
       if (Size == 0)
         continue;
       const uint64_t StartAddr = Sect.getAddress();
-      TextAddressRanges.insert({StartAddr, StartAddr + Size});
+      if (Sect.isText())
+        TextAddressRanges.insert({StartAddr, StartAddr + Size});
+      if (object::ELFSectionRef(Sect).getFlags() & ELF::SHF_ALLOC)
+        AllocatedAddressRanges.insert({StartAddr, StartAddr + Size});
     }
 
     // Check CU address ranges for tombstone value.
@@ -118,7 +121,7 @@ public:
     case dwarf::DW_OP_const8s:
     case dwarf::DW_OP_addr: {
       if (!isDeadAddress(Op.getRawOperand(0), U.getVersion(), Opts.Tombstone,
-                         U.getAddressByteSize()))
+                         U.getAddressByteSize(), /*IsCode=*/false))
         // Relocation value for the linked binary is 0.
         return 0;
     } break;
@@ -127,7 +130,7 @@ public:
       if (std::optional<object::SectionedAddress> Address =
               U.getAddrOffsetSectionItem(Op.getRawOperand(0))) {
         if (!isDeadAddress(Address->Address, U.getVersion(), Opts.Tombstone,
-                           U.getAddressByteSize()))
+                           U.getAddressByteSize(), /*IsCode=*/false))
           // Relocation value for the linked binary is 0.
           return 0;
       }
@@ -157,12 +160,14 @@ public:
   void clear() override {}
 
 protected:
-  // returns true if specified address range is inside address ranges
-  // of executable sections.
-  bool isInsideExecutableSectionsAddressRange(uint64_t LowPC,
-                                              std::optional<uint64_t> HighPC) {
+  // Code ranges require executable sections; data addresses require allocated
+  // sections. Debug sections must not keep a variable alive.
+  bool isInsideSectionsAddressRange(uint64_t LowPC,
+                                    std::optional<uint64_t> HighPC,
+                                    bool IsCode) {
     std::optional<AddressRange> Range =
-        TextAddressRanges.getRangeThatContains(LowPC);
+        (IsCode ? TextAddressRanges : AllocatedAddressRanges)
+            .getRangeThatContains(LowPC);
 
     if (HighPC)
       return Range.has_value() && Range->end() >= *HighPC;
@@ -170,28 +175,29 @@ protected:
     return Range.has_value();
   }
 
-  uint64_t isBFDDeadAddressRange(uint64_t LowPC, std::optional<uint64_t> HighPC,
-                                 uint16_t Version) {
+  bool isBFDDeadAddressRange(uint64_t LowPC, std::optional<uint64_t> HighPC,
+                                 uint16_t Version, bool IsCode) {
     if (LowPC == 0)
       return true;
 
     if ((Version <= 4) && HighPC && (LowPC == 1 && *HighPC == 1))
       return true;
 
-    return !isInsideExecutableSectionsAddressRange(LowPC, HighPC);
+    return !isInsideSectionsAddressRange(LowPC, HighPC, IsCode);
   }
 
-  uint64_t isMAXPCDeadAddressRange(uint64_t LowPC,
+  bool isMAXPCDeadAddressRange(uint64_t LowPC,
                                    std::optional<uint64_t> HighPC,
-                                   uint16_t Version, uint8_t AddressByteSize) {
+                                   uint16_t Version, uint8_t AddressByteSize,
+                                   bool IsCode) {
     if (Version <= 4 && HighPC) {
       if (LowPC == (dwarf::computeTombstoneAddress(AddressByteSize) - 1))
         return true;
     } else if (LowPC == dwarf::computeTombstoneAddress(AddressByteSize))
       return true;
 
-    if (!isInsideExecutableSectionsAddressRange(LowPC, HighPC))
-      warning("Address referencing invalid text section is not marked with "
+    if (!isInsideSectionsAddressRange(LowPC, HighPC, IsCode))
+      warning("Address referencing invalid section is not marked with "
               "tombstone value");
 
     return false;
@@ -199,30 +205,33 @@ protected:
 
   bool isDeadAddressRange(uint64_t LowPC, std::optional<uint64_t> HighPC,
                           uint16_t Version, TombstoneKind Tombstone,
-                          uint8_t AddressByteSize) {
+                          uint8_t AddressByteSize, bool IsCode = true) {
     switch (Tombstone) {
     case TombstoneKind::BFD:
-      return isBFDDeadAddressRange(LowPC, HighPC, Version);
+      return isBFDDeadAddressRange(LowPC, HighPC, Version, IsCode);
     case TombstoneKind::MaxPC:
-      return isMAXPCDeadAddressRange(LowPC, HighPC, Version, AddressByteSize);
+      return isMAXPCDeadAddressRange(LowPC, HighPC, Version, AddressByteSize,
+                                     IsCode);
     case TombstoneKind::Universal:
-      return isBFDDeadAddressRange(LowPC, HighPC, Version) ||
-             isMAXPCDeadAddressRange(LowPC, HighPC, Version, AddressByteSize);
+      return isBFDDeadAddressRange(LowPC, HighPC, Version, IsCode) ||
+             isMAXPCDeadAddressRange(LowPC, HighPC, Version, AddressByteSize,
+                                     IsCode);
     case TombstoneKind::Exec:
-      return !isInsideExecutableSectionsAddressRange(LowPC, HighPC);
+      return !isInsideSectionsAddressRange(LowPC, HighPC, IsCode);
     }
 
     llvm_unreachable("Unknown tombstone value");
   }
 
   bool isDeadAddress(uint64_t LowPC, uint16_t Version, TombstoneKind Tombstone,
-                     uint8_t AddressByteSize) {
+                     uint8_t AddressByteSize, bool IsCode = true) {
     return isDeadAddressRange(LowPC, std::nullopt, Version, Tombstone,
-                              AddressByteSize);
+                              AddressByteSize, IsCode);
   }
 
 private:
   AddressRanges TextAddressRanges;
+  AddressRanges AllocatedAddressRanges;
   const Options &Opts;
   bool HasValidAddressRanges = false;
 };

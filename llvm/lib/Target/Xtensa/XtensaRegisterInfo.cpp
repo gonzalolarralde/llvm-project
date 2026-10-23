@@ -53,6 +53,8 @@ BitVector XtensaRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
     // Reserve frame pointer.
     Reserved.set(getFrameRegister(MF));
   }
+  if (hasBasePointer(MF))
+    Reserved.set(Xtensa::A6);
   if (Subtarget.hasTHREADPTR()) {
     // Reserve frame pointer.
     Reserved.set(Xtensa::THREADPTR);
@@ -60,6 +62,10 @@ BitVector XtensaRegisterInfo::getReservedRegs(const MachineFunction &MF) const {
   // Reserve stack pointer.
   Reserved.set(Xtensa::SP);
   return Reserved;
+}
+
+bool XtensaRegisterInfo::hasBasePointer(const MachineFunction &MF) const {
+  return Subtarget.isWindowedABI() && hasStackRealignment(MF);
 }
 
 bool XtensaRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
@@ -87,7 +93,12 @@ bool XtensaRegisterInfo::eliminateFrameIndex(MachineBasicBlock::iterator II,
   // Everything else is referenced relative to whatever register
   // getFrameRegister() returns.
   MCRegister FrameReg;
-  if ((FrameIndex >= MinCSFI && FrameIndex <= MaxCSFI))
+  if (Subtarget.isWindowedABI() && hasStackRealignment(MF)) {
+    if (MFI.isFixedObjectIndex(FrameIndex))
+      FrameReg = getFrameRegister(MF);
+    else
+      FrameReg = hasBasePointer(MF) ? Xtensa::A6 : Xtensa::SP;
+  } else if ((FrameIndex >= MinCSFI && FrameIndex <= MaxCSFI))
     FrameReg = Xtensa::SP;
   else
     FrameReg = getFrameRegister(MF);

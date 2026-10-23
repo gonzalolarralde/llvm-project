@@ -30,14 +30,42 @@ using namespace llvm;
 #define MIN_FRAME_SIZE (8 * UNITS_PER_WORD)
 
 XtensaFrameLowering::XtensaFrameLowering(const XtensaSubtarget &STI)
-    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown, Align(4), 0,
-                          Align(4)),
+    : TargetFrameLowering(TargetFrameLowering::StackGrowsDown,
+                          STI.isWindowedABI() ? Align(16) : Align(4), 0,
+                          STI.isWindowedABI() ? Align(16) : Align(4)),
       STI(STI), TII(*STI.getInstrInfo()), TRI(STI.getRegisterInfo()) {}
 
 bool XtensaFrameLowering::hasFPImpl(const MachineFunction &MF) const {
   const MachineFrameInfo &MFI = MF.getFrameInfo();
+  // Reserving more than 1008 outgoing bytes puts the emergency spill slot
+  // beyond L32I/S32I's 1020-byte reach. IR calls are analyzed before formal
+  // arguments; the MFI size also covers MIR input with no corresponding IR.
+  bool LargeCallFrame = MFI.getMaxCallFrameSize() > 1008 ||
+                       MF.getInfo<XtensaMachineFunctionInfo>()->hasLargeCallFrame();
   return MF.getTarget().Options.DisableFramePointerElim(MF) ||
-         MFI.hasVarSizedObjects();
+         MFI.hasVarSizedObjects() ||
+         (STI.isWindowedABI() &&
+          (TRI->hasStackRealignment(MF) || LargeCallFrame));
+}
+
+StackOffset XtensaFrameLowering::getFrameIndexReference(
+    const MachineFunction &MF, int FI, Register &FrameReg) const {
+  StackOffset Offset =
+      TargetFrameLowering::getFrameIndexReference(MF, FI, FrameReg);
+  if (STI.isWindowedABI() && TRI->hasStackRealignment(MF) &&
+      !MF.getFrameInfo().isFixedObjectIndex(FI))
+    FrameReg = TRI->hasBasePointer(MF) ? Xtensa::A6 : Xtensa::SP;
+  return Offset;
+}
+
+bool XtensaFrameLowering::allocateScavengingFrameIndexesNearIncomingSP(
+    const MachineFunction &MF) const {
+  // Windowed FP/BP point to the bottom of the fixed frame. An emergency slot
+  // near the incoming SP can itself need a scratch register to address once
+  // the frame exceeds L32I/S32I's 1020-byte range, causing recursive scavenging.
+  if (STI.isWindowedABI())
+    return false;
+  return TargetFrameLowering::allocateScavengingFrameIndexesNearIncomingSP(MF);
 }
 
 void XtensaFrameLowering::emitPrologue(MachineFunction &MF,
@@ -60,10 +88,6 @@ void XtensaFrameLowering::emitPrologue(MachineFunction &MF,
 
   if (STI.isWindowedABI()) {
     StackSize += 32;
-    uint64_t MaxAlignment = MFI.getMaxAlign().value();
-    if (MaxAlignment > 32)
-      StackSize += MaxAlignment;
-
     if (StackSize <= 32760) {
       BuildMI(MBB, MBBI, DL, TII.get(Xtensa::ENTRY))
           .addReg(SP)
@@ -82,34 +106,20 @@ void XtensaFrameLowering::emitPrologue(MachineFunction &MF,
       BuildMI(MBB, MBBI, DL, TII.get(Xtensa::MOVSP), SP).addReg(TmpReg);
     }
 
-    // Calculate how much is needed to have the correct alignment.
-    // Change offset to: alignment + difference.
-    // For example, in case of alignment of 128:
-    // diff_to_128_aligned_address = (128 - (SP & 127))
-    // new_offset = SP + diff_to_128_aligned_address
-    // This is safe to do because we increased the stack size by MaxAlignment.
-    MCRegister Reg, RegMisAlign;
-    if (MaxAlignment > 32) {
-      TII.loadImmediate(MBB, MBBI, &RegMisAlign, MaxAlignment - 1);
-      TII.loadImmediate(MBB, MBBI, &Reg, MaxAlignment);
-      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::AND))
-          .addReg(RegMisAlign, RegState::Define)
-          .addReg(FP)
-          .addReg(RegMisAlign);
-      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::SUB), RegMisAlign)
-          .addReg(Reg)
-          .addReg(RegMisAlign);
-      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::ADD), SP)
-          .addReg(SP)
-          .addReg(RegMisAlign, RegState::Kill);
-    }
-
     // Store FP register in A8, because FP may be used to pass function
     // arguments
     if (XtensaFI->isSaveFrameRegister()) {
       BuildMI(MBB, MBBI, DL, TII.get(Xtensa::OR), Xtensa::A8)
           .addReg(FP)
           .addReg(FP);
+    }
+    // A realigned frame also needs a stable base for its local objects because
+    // dynamic allocations or outgoing call frames can change SP again.
+    // Preserve an argument in a6 before replacing it.
+    if (XtensaFI->isSaveBaseRegister()) {
+      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::OR), Xtensa::A9)
+          .addReg(Xtensa::A6)
+          .addReg(Xtensa::A6);
     }
 
     // if framepointer enabled, set it to point to the stack pointer.
@@ -131,6 +141,26 @@ void XtensaFrameLowering::emitPrologue(MachineFunction &MF,
           MCCFIInstruction::cfiDefCfaOffset(nullptr, StackSize));
       BuildMI(MBB, MBBI, DL, TII.get(TargetOpcode::CFI_INSTRUCTION))
           .addCFIIndex(CFIIndex);
+    }
+
+    if (TRI->hasStackRealignment(MF)) {
+      // Keep FP at the unaligned frame base so incoming stack arguments and
+      // the CFA retain a fixed offset. Locals use the aligned BP even while
+      // dynamic allocations or call frames move SP. MOVSP preserves window-spill
+      // semantics when extending the frame by the alignment padding.
+      MCRegister Reg;
+      TII.loadImmediate(MBB, MBBI, &Reg,
+                        -int64_t(MFI.getMaxAlign().value()));
+      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::AND), Reg)
+          .addReg(SP)
+          .addReg(Reg, RegState::Kill);
+      BuildMI(MBB, MBBI, DL, TII.get(Xtensa::MOVSP), SP)
+          .addReg(Reg, RegState::Kill);
+      if (TRI->hasBasePointer(MF))
+        BuildMI(MBB, MBBI, DL, TII.get(Xtensa::OR), Xtensa::A6)
+            .addReg(SP)
+            .addReg(SP)
+            .setMIFlag(MachineInstr::FrameSetup);
     }
   } else {
     // No need to allocate space on the stack.
@@ -333,7 +363,10 @@ MachineBasicBlock::iterator XtensaFrameLowering::eliminateCallFramePseudoInstr(
     MachineFunction &MF, MachineBasicBlock &MBB,
     MachineBasicBlock::iterator I) const {
   if (!hasReservedCallFrame(MF)) {
-    int64_t Amount = I->getOperand(0).getImm();
+    Align Alignment = getStackAlign();
+    if (STI.isWindowedABI())
+      Alignment = std::max(Alignment, MF.getFrameInfo().getMaxAlign());
+    int64_t Amount = alignTo(I->getOperand(0).getImm(), Alignment);
 
     if (I->getOpcode() == Xtensa::ADJCALLSTACKDOWN)
       Amount = -Amount;
@@ -374,6 +407,13 @@ void XtensaFrameLowering::processFunctionBeforeFrameFinalized(
   // scavenging may need an emergency slot under register pressure.
   if (!isInt<8>(MaxSPOffset + (STI.isWindowedABI() ? 32 : 0)))
     ScavSlotsNum = 1;
+
+  // Even a tiny fixed frame can need a scratch register for MOVSP while
+  // opening/closing a dynamic call frame. Its size is deliberately absent
+  // from estimateStackSize when the function has a frame pointer.
+  if (STI.isWindowedABI() && !hasReservedCallFrame(MF) &&
+      MFI.getMaxCallFrameSize() != 0)
+    ScavSlotsNum = std::max(ScavSlotsNum, 1u);
 
   // Far branches over 18-bit offset require a spill slot for scratch register.
   bool IsLargeFunction = !isInt<18>(MF.estimateFunctionSizeInBytes());

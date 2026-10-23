@@ -348,16 +348,10 @@ unsigned DWARFVerifier::verifyDebugInfoCallSite(const DWARFDie &Die) {
     return 0;
 
   DWARFDie Curr = Die.getParent();
-  for (; Curr.isValid() && !Curr.isSubprogramDIE(); Curr = Curr.getParent()) {
-    if (Curr.getTag() == DW_TAG_inlined_subroutine) {
-      ErrorCategory.Report(
-          "Call site nested entry within inlined subroutine", [&]() {
-            error() << "Call site entry nested within inlined subroutine:";
-            Curr.dump(OS);
-          });
-      return 1;
-    }
-  }
+  // DWARF 5 section 3.4.1 places a call site in the innermost source scope,
+  // which can be an inlined subroutine containing a call to another function.
+  for (; Curr.isValid() && !Curr.isSubprogramDIE(); Curr = Curr.getParent())
+    ;
 
   if (!Curr.isValid()) {
     ErrorCategory.Report(
@@ -368,21 +362,8 @@ unsigned DWARFVerifier::verifyDebugInfoCallSite(const DWARFDie &Die) {
     return 1;
   }
 
-  std::optional<DWARFFormValue> CallAttr = Curr.find(
-      {DW_AT_call_all_calls, DW_AT_call_all_source_calls,
-       DW_AT_call_all_tail_calls, DW_AT_GNU_all_call_sites,
-       DW_AT_GNU_all_source_call_sites, DW_AT_GNU_all_tail_call_sites});
-  if (!CallAttr) {
-    ErrorCategory.Report(
-        "Subprogram with call site entry has no DW_AT_call attribute", [&]() {
-          error()
-              << "Subprogram with call site entry has no DW_AT_call attribute:";
-          Curr.dump(OS);
-          Die.dump(OS, /*indent*/ 1);
-        });
-    return 1;
-  }
-
+  // DW_AT_call_all_* asserts completeness; describing only some calls is valid
+  // without such an attribute (DWARF 5 section 3.3.1).
   return 0;
 }
 
@@ -680,6 +661,13 @@ unsigned DWARFVerifier::verifyDieRanges(const DWARFDie &Die,
 
 bool DWARFVerifier::verifyExpressionOp(const DWARFExpression::Operation &Op,
                                        DWARFUnit *U) {
+  if (Op.isError())
+    return false;
+  if (Op.getCode() == DW_OP_GNU_parameter_ref) {
+    auto Parameter = U->getDIEForOffset(U->getOffset() + Op.getRawOperand(0));
+    if (!Parameter || Parameter.getTag() != DW_TAG_formal_parameter)
+      return false;
+  }
   for (unsigned Operand = 0; Operand < Op.Desc.Op.size(); ++Operand) {
     unsigned Size = Op.Desc.Op[Operand];
 
@@ -688,7 +676,8 @@ bool DWARFVerifier::verifyExpressionOp(const DWARFExpression::Operation &Op,
       // the generic type should be done, so don't look up a base type in that
       // case. The same holds for DW_OP_reinterpret, which is currently not
       // supported.
-      if (Op.Opcode == DW_OP_convert && Op.Operands[Operand] == 0)
+      if ((Op.Opcode == DW_OP_convert || Op.Opcode == DW_OP_GNU_convert) &&
+          Op.Operands[Operand] == 0)
         continue;
       auto Die = U->getDIEForOffset(U->getOffset() + Op.Operands[Operand]);
       if (!Die || Die.getTag() != dwarf::DW_TAG_base_type)
@@ -803,6 +792,11 @@ unsigned DWARFVerifier::verifyDebugInfoAttribute(const DWARFDie &Die,
         break;
       // This might be reference to a function declaration.
       if (DieTag == DW_TAG_GNU_call_site && RefTag == DW_TAG_subprogram)
+        break;
+      // The GNU predecessor of DW_AT_call_parameter uses abstract_origin.
+      if (Attr == DW_AT_abstract_origin &&
+          DieTag == DW_TAG_GNU_call_site_parameter &&
+          RefTag == DW_TAG_formal_parameter)
         break;
       ReportError("Incompatible DW_AT_abstract_origin tag reference",
                   formatv("DIE with tag {0} has {1} that points to DIE with "
@@ -2297,13 +2291,15 @@ bool DWARFVerifier::verifyDebugStrOffsets(
     }
     uint64_t OffsetByteSize = getDwarfOffsetByteSize(Format);
     DA.setAddressSize(OffsetByteSize);
-    uint64_t Remainder = (Length - 4) % OffsetByteSize;
+    const uint64_t HeaderSize = LegacyFormat ? 0 : 4;
+    uint64_t Remainder = (Length - HeaderSize) % OffsetByteSize;
     if (Remainder != 0) {
       ErrorCategory.Report("Invalid section contribution length", [&]() {
         error() << formatv(
             "{0}: contribution {1:X}: invalid length ((length ({2:X}) "
-            "- header (0x4)) % offset size {3:X} == {4:X} != 0)\n",
-            SectionName, StartOffset, Length, OffsetByteSize, Remainder);
+            "- header ({5:X})) % offset size {3:X} == {4:X} != 0)\n",
+            SectionName, StartOffset, Length, OffsetByteSize, Remainder,
+            HeaderSize);
       });
       Success = false;
     }
@@ -2311,9 +2307,8 @@ bool DWARFVerifier::verifyDebugStrOffsets(
          ++Index) {
       uint64_t OffOff = C.tell();
       uint64_t StrOff = DA.getAddress(C);
-      // check StrOff refers to the start of a string
-      if (StrOff == 0)
-        continue;
+      // Linkers can share suffixes in .debug_str. An offset need not follow a
+      // NUL byte, but must point to a NUL-terminated string within the section.
       if (StrData.size() <= StrOff) {
         ErrorCategory.Report(
             "String offset out of bounds of string section", [&]() {
@@ -2324,16 +2319,17 @@ bool DWARFVerifier::verifyDebugStrOffsets(
                   SectionName, StartOffset, Index, OffOff, StrOff,
                   StrData.size());
             });
+        Success = false;
         continue;
       }
-      if (StrData[StrOff - 1] == '\0')
+      if (StrData.find('\0', StrOff) != StringRef::npos)
         continue;
       ErrorCategory.Report(
           "Section contribution contains invalid string offset", [&]() {
             error() << formatv(
                 "{0}: contribution {1:X}: index {2:X}: invalid string "
-                "offset *{3:X} == {4:X}, is neither zero nor "
-                "immediately following a null character\n",
+                "offset *{3:X} == {4:X}, is not followed by a null "
+                "terminator within the string section\n",
                 SectionName, StartOffset, Index, OffOff, StrOff);
           });
       Success = false;
@@ -2345,6 +2341,7 @@ bool DWARFVerifier::verifyDebugStrOffsets(
     ErrorCategory.Report("String offset error", [&]() {
       error() << formatv("{0}: {1}\n", SectionName, Msg);
     });
+    Success = false;
   }
   return Success;
 }

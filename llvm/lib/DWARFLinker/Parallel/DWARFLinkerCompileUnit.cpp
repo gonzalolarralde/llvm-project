@@ -1248,7 +1248,8 @@ void CompileUnit::cloneDieAttrExpression(
       // Look up the base type. For DW_OP_convert, the operand may be 0 to
       // instead indicate the generic type. The same holds for
       // DW_OP_reinterpret, which is currently not supported.
-      if (RefOffset > 0 || Op.getCode() != dwarf::DW_OP_convert) {
+      if (RefOffset > 0 || (Op.getCode() != dwarf::DW_OP_convert &&
+                            Op.getCode() != dwarf::DW_OP_GNU_convert)) {
         RefOffset += OrigUnit.getOffset();
         uint32_t RefDieIdx = 0;
         if (std::optional<uint32_t> Idx =

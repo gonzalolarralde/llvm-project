@@ -47,6 +47,43 @@ void XtensaAsmPrinter::emitInstruction(const MachineInstr *MI) {
   unsigned Opc = MI->getOpcode();
 
   switch (Opc) {
+  case Xtensa::TAILW:
+    if (getFunctionCFISectionType(*MF) != CFISection::None) {
+      emitCFIInstruction(MCCFIInstruction::createRememberState(nullptr));
+      emitCFIInstruction(MCCFIInstruction::cfiDefCfa(
+          nullptr, OutContext.getRegisterInfo()->getDwarfRegNum(Xtensa::A9, true),
+          0));
+    }
+    for (unsigned I = 0; I != 6; ++I)
+      if (MI->getOperand(0).getImm() & (1u << I))
+        EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::OR)
+                                        .addReg(Xtensa::A2 + I)
+                                        .addReg(Xtensa::A10 + I)
+                                        .addReg(Xtensa::A10 + I));
+    // Reuse this window, including its original return address. ENTRY's
+    // immediate gives the callee's initial frame size (large-frame adjustment
+    // follows ENTRY). MOVSP also handles an already-spilled caller window.
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::L32I)
+                                    .addReg(Xtensa::A10)
+                                    .addReg(Xtensa::A8).addImm(0));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::EXTUI)
+                                    .addReg(Xtensa::A10)
+                                    .addReg(Xtensa::A10).addImm(12).addImm(12));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::SLLI)
+                                    .addReg(Xtensa::A10)
+                                    .addReg(Xtensa::A10).addImm(3));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::SUB)
+                                    .addReg(Xtensa::A10)
+                                    .addReg(Xtensa::A9).addReg(Xtensa::A10));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::MOVSP)
+                                    .addReg(Xtensa::SP).addReg(Xtensa::A10));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::ADDI)
+                                    .addReg(Xtensa::A8)
+                                    .addReg(Xtensa::A8).addImm(3));
+    EmitToStreamer(*OutStreamer, MCInstBuilder(Xtensa::JX).addReg(Xtensa::A8));
+    if (getFunctionCFISectionType(*MF) != CFISection::None)
+      emitCFIInstruction(MCCFIInstruction::createRestoreState(nullptr));
+    return;
   case Xtensa::BR_JT:
     EmitToStreamer(
         *OutStreamer,

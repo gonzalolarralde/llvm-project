@@ -107,6 +107,8 @@ public:
 private:
   const XtensaSubtarget &Subtarget;
 
+  void analyzeIRCallFrames(MachineFunction &MF) const;
+
   SDValue LowerBR_JT(SDValue Op, SelectionDAG &DAG) const;
 
   SDValue LowerImmediate(SDValue Op, SelectionDAG &DAG) const;

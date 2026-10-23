@@ -50,8 +50,9 @@ unsigned XtensaObjectWriter::getRelocType(const MCFixup &Fixup,
 
   switch ((unsigned)Fixup.getKind()) {
   case FK_Data_4:
-    return Specifier == Xtensa::S_TPOFF ? ELF::R_XTENSA_TLS_TPOFF
-                                        : ELF::R_XTENSA_32;
+    if (Specifier == Xtensa::S_TPOFF)
+      return ELF::R_XTENSA_TLS_TPOFF;
+    return IsPCRel ? ELF::R_XTENSA_32_PCREL : ELF::R_XTENSA_32;
   default:
     return ELF::R_XTENSA_SLOT0_OP;
   }

@@ -177,8 +177,7 @@ private:
   ///  - That the root DIE is a unit DIE.
   ///  - If a unit type is provided, that the unit DIE matches the unit type.
   ///  - The DIE ranges.
-  ///  - That call site entries are only nested within subprograms with a
-  ///    DW_AT_call attribute.
+  ///  - That call site entries have an enclosing subprogram.
   ///
   /// \param Unit      The DWARF Unit to verify.
   ///

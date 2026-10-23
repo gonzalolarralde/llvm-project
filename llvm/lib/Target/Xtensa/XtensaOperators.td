@@ -56,6 +56,9 @@ def Xtensa_ret: SDNode<"XtensaISD::RET", SDTNone,
 def Xtensa_retw: SDNode<"XtensaISD::RETW", SDTNone,
                        [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
 
+def Xtensa_tailw: SDNode<"XtensaISD::TAILW", SDTypeProfile<0, 1, [SDTCisVT<0, i32>]>,
+                        [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]>;
+
 def Xtensa_pcrel_wrapper: SDNode<"XtensaISD::PCREL_WRAPPER", SDT_XtensaWrapPtr, []>;
 
 def Xtensa_callseq_start: SDNode<"ISD::CALLSEQ_START", SDT_XtensaCallSeqStart,

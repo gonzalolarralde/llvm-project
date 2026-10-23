@@ -1,0 +1,300 @@
+# RUN: llc -mtriple=xtensa-esp32s3-none-elf -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+# Physical-register pressure is constructed inside the body, after ENTRY and
+# frame-pointer setup, so only the legal incoming argument a2 is live at entry.
+# The tiny fixed frame needs an emergency slot for dynamic MOVSP adjustments.
+# Even frame-pointer=none must use a stable FP when reserving the outgoing area
+# would push the emergency slot past S32I/L32I's 1020-byte offset range.
+
+--- |
+  target triple = "xtensa-esp32s3-none-elf"
+  define void @small_dynamic_call_frame(ptr %out) "frame-pointer"="all" { ret void }
+  define void @large_dynamic_call_frame(ptr %out) "frame-pointer"="all" { ret void }
+  define void @large_omit_call_frame(ptr %out) "frame-pointer"="none" { ret void }
+  define void @huge_dynamic_call_frame(ptr %out) "frame-pointer"="none" { ret void }
+  define void @largest_reserved_call_frame(ptr %out) "frame-pointer"="none" { ret void }
+...
+# CHECK-LABEL: name: small_dynamic_call_frame
+# CHECK: $a7 = frame-setup OR $sp, $sp
+# CHECK: bb.1:
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $a7, 0
+# CHECK-NEXT: [[SCRATCH]] = ADDI $sp, -16
+# CHECK-NEXT: $sp = MOVSP killed [[SCRATCH]]
+# CHECK-NEXT: [[SCRATCH]] = L32I $a7, 0
+# CHECK: S32I $a2, $a7, 44
+# CHECK: RETW
+
+---
+name: small_dynamic_call_frame
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: all
+  adjustsStack: true
+  maxCallFrameSize: 16
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 16, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2
+    $a3 = MOVI 3
+    $a4 = MOVI 4
+    $a5 = MOVI 5
+    $a6 = MOVI 6
+    $a8 = MOVI 8
+    $a9 = MOVI 9
+    $a10 = MOVI 10
+    $a11 = MOVI 11
+    $a12 = MOVI 12
+    $a13 = MOVI 13
+    $a14 = MOVI 14
+    $a15 = MOVI 15
+    J %bb.1
+  bb.1:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    ADJCALLSTACKDOWN 16, 0, implicit-def dead $sp, implicit $sp
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a8, $a2, 16
+    S32I $a9, $a2, 20
+    S32I $a10, $a2, 24
+    S32I $a11, $a2, 28
+    S32I $a12, $a2, 32
+    S32I $a13, $a2, 36
+    S32I $a14, $a2, 40
+    S32I $a15, $a2, 44
+    ADJCALLSTACKUP 16, 0, implicit-def dead $sp, implicit $sp
+    RETW implicit $a0
+...
+
+# CHECK-LABEL: name: large_dynamic_call_frame
+# CHECK: $a7 = frame-setup OR $sp, $sp
+# CHECK: bb.1:
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $a7, 0
+# CHECK-NEXT: [[SCRATCH]] = MOVI -1200
+# CHECK-NEXT: [[SCRATCH]] = ADD $sp, killed [[SCRATCH]]
+# CHECK-NEXT: $sp = MOVSP killed [[SCRATCH]]
+# CHECK-NEXT: [[SCRATCH]] = L32I $a7, 0
+# CHECK: S32I $a2, $a7, 44
+# CHECK: RETW
+
+---
+name: large_dynamic_call_frame
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: all
+  adjustsStack: true
+  maxCallFrameSize: 1200
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 16, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2
+    $a3 = MOVI 3
+    $a4 = MOVI 4
+    $a5 = MOVI 5
+    $a6 = MOVI 6
+    $a8 = MOVI 8
+    $a9 = MOVI 9
+    $a10 = MOVI 10
+    $a11 = MOVI 11
+    $a12 = MOVI 12
+    $a13 = MOVI 13
+    $a14 = MOVI 14
+    $a15 = MOVI 15
+    J %bb.1
+  bb.1:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    ADJCALLSTACKDOWN 1200, 0, implicit-def dead $sp, implicit $sp
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a8, $a2, 16
+    S32I $a9, $a2, 20
+    S32I $a10, $a2, 24
+    S32I $a11, $a2, 28
+    S32I $a12, $a2, 32
+    S32I $a13, $a2, 36
+    S32I $a14, $a2, 40
+    S32I $a15, $a2, 44
+    ADJCALLSTACKUP 1200, 0, implicit-def dead $sp, implicit $sp
+    RETW implicit $a0
+...
+
+# CHECK-LABEL: name: large_omit_call_frame
+# CHECK: $a7 = frame-setup OR $sp, $sp
+# CHECK: bb.1:
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $a7, 0
+# CHECK-NEXT: [[SCRATCH]] = MOVI -1200
+# CHECK-NEXT: [[SCRATCH]] = ADD $sp, killed [[SCRATCH]]
+# CHECK-NEXT: $sp = MOVSP killed [[SCRATCH]]
+# CHECK-NEXT: [[SCRATCH]] = L32I $a7, 0
+# CHECK: S32I $a2, $a7, 44
+# CHECK: RETW
+
+---
+name: large_omit_call_frame
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: none
+  adjustsStack: true
+  maxCallFrameSize: 1200
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 16, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2
+    $a3 = MOVI 3
+    $a4 = MOVI 4
+    $a5 = MOVI 5
+    $a6 = MOVI 6
+    $a8 = MOVI 8
+    $a9 = MOVI 9
+    $a10 = MOVI 10
+    $a11 = MOVI 11
+    $a12 = MOVI 12
+    $a13 = MOVI 13
+    $a14 = MOVI 14
+    $a15 = MOVI 15
+    J %bb.1
+  bb.1:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    ADJCALLSTACKDOWN 1200, 0, implicit-def dead $sp, implicit $sp
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a8, $a2, 16
+    S32I $a9, $a2, 20
+    S32I $a10, $a2, 24
+    S32I $a11, $a2, 28
+    S32I $a12, $a2, 32
+    S32I $a13, $a2, 36
+    S32I $a14, $a2, 40
+    S32I $a15, $a2, 44
+    ADJCALLSTACKUP 1200, 0, implicit-def dead $sp, implicit $sp
+    RETW implicit $a0
+...
+
+# CHECK-LABEL: name: huge_dynamic_call_frame
+# CHECK: $a7 = frame-setup OR $sp, $sp
+# CHECK: bb.1:
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $a7, 0
+# CHECK-NEXT: [[SCRATCH]] = L32R
+# CHECK-NEXT: [[SCRATCH]] = ADD $sp, killed [[SCRATCH]]
+# CHECK-NEXT: $sp = MOVSP killed [[SCRATCH]]
+# CHECK-NEXT: [[SCRATCH]] = L32I $a7, 0
+# CHECK: S32I $a2, $a7, 44
+# CHECK: RETW
+
+---
+name: huge_dynamic_call_frame
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: none
+  adjustsStack: true
+  maxCallFrameSize: 40000
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 16, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2
+    $a3 = MOVI 3
+    $a4 = MOVI 4
+    $a5 = MOVI 5
+    $a6 = MOVI 6
+    $a8 = MOVI 8
+    $a9 = MOVI 9
+    $a10 = MOVI 10
+    $a11 = MOVI 11
+    $a12 = MOVI 12
+    $a13 = MOVI 13
+    $a14 = MOVI 14
+    $a15 = MOVI 15
+    J %bb.1
+  bb.1:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    ADJCALLSTACKDOWN 40000, 0, implicit-def dead $sp, implicit $sp
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a8, $a2, 16
+    S32I $a9, $a2, 20
+    S32I $a10, $a2, 24
+    S32I $a11, $a2, 28
+    S32I $a12, $a2, 32
+    S32I $a13, $a2, 36
+    S32I $a14, $a2, 40
+    S32I $a15, $a2, 44
+    ADJCALLSTACKUP 40000, 0, implicit-def dead $sp, implicit $sp
+    RETW implicit $a0
+...
+
+# CHECK-LABEL: name: largest_reserved_call_frame
+# CHECK-NOT: $a7 = frame-setup
+# CHECK: bb.1:
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $sp, 1008
+# CHECK-NEXT: [[SCRATCH]] = MOVI 1052
+# CHECK-NEXT: [[SCRATCH]] = ADD $sp, killed [[SCRATCH]]
+# CHECK-NEXT: S32I $a2, killed [[SCRATCH]], 0
+# CHECK-NEXT: [[SCRATCH]] = L32I $sp, 1008
+# CHECK: RETW
+
+---
+name: largest_reserved_call_frame
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: none
+  adjustsStack: true
+  maxCallFrameSize: 1008
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 16, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2
+    $a3 = MOVI 3
+    $a4 = MOVI 4
+    $a5 = MOVI 5
+    $a6 = MOVI 6
+    $a7 = MOVI 7
+    $a8 = MOVI 8
+    $a9 = MOVI 9
+    $a10 = MOVI 10
+    $a11 = MOVI 11
+    $a12 = MOVI 12
+    $a13 = MOVI 13
+    $a14 = MOVI 14
+    $a15 = MOVI 15
+    J %bb.1
+  bb.1:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a7, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    ADJCALLSTACKDOWN 1008, 0, implicit-def dead $sp, implicit $sp
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a7, $a2, 16
+    S32I $a8, $a2, 20
+    S32I $a9, $a2, 24
+    S32I $a10, $a2, 28
+    S32I $a11, $a2, 32
+    S32I $a12, $a2, 36
+    S32I $a13, $a2, 40
+    S32I $a14, $a2, 44
+    S32I $a15, $a2, 48
+    ADJCALLSTACKUP 1008, 0, implicit-def dead $sp, implicit $sp
+    RETW implicit $a0
+...

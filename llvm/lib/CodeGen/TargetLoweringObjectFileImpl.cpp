@@ -312,7 +312,9 @@ void TargetLoweringObjectFileELF::emitModuleMetadata(MCStreamer &Streamer,
 
   emitLinkerDirectives(Streamer, M);
 
-  if (NamedMDNode *DependentLibraries = M.getNamedMetadata("llvm.dependent-libraries")) {
+  if (NamedMDNode *DependentLibraries =
+          M.getNamedMetadata("llvm.dependent-libraries");
+      DependentLibraries && DependentLibraries->getNumOperands()) {
     auto *S = C.getELFSection(".deplibs", ELF::SHT_LLVM_DEPENDENT_LIBRARIES,
                               ELF::SHF_MERGE | ELF::SHF_STRINGS, 1);
 

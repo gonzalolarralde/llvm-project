@@ -66,6 +66,17 @@ public:
     return TargetInfo::XtensaABIBuiltinVaList;
   }
 
+  CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
+    switch (CC) {
+    case CC_C:
+    case CC_Swift:
+      return CCCR_OK;
+    default:
+      // The windowed backend does not yet implement mandatory tail calls.
+      return CCCR_Warning;
+    }
+  }
+
   std::string_view getClobbers() const override { return ""; }
 
   ArrayRef<const char *> getGCCRegNames() const override {

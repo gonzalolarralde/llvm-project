@@ -751,6 +751,17 @@ def : Pat<(Xtensa_callw8 (i32 texternalsym:$dst)),
 def : Pat<(Xtensa_callw8 AR:$dst),
           (CALLX8 AR:$dst)>;
 
+// a8 holds a verified windowed entry address; a9 holds the incoming SP.
+// Arguments use a10-a15 until all frame accesses are complete. The final
+// transfer copies them into the current window and retains the original a0.
+let isReturn = 1, isTerminator = 1, isBarrier = 1, mayLoad = 1,
+    hasSideEffects = 1, Uses = [A0, A8, A9],
+    Defs = [SP, A2, A3, A4, A5, A6, A7, A8, A10], Size = 39 in {
+  def TAILW : Pseudo<(outs), (ins i32imm:$args), "!tailw $args",
+                    [(Xtensa_tailw timm:$args)]>,
+              Requires<[HasWindowed]>;
+}
+
 def MOVSP : RRR_Inst<0x00, 0x00, 0x00, (outs AR:$t), (ins AR:$s),
                     "movsp\t$t, $s", []>, Requires<[HasWindowed]> {
   let r = 0x01;

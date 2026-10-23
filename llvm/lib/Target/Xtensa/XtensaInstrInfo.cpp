@@ -88,17 +88,18 @@ void XtensaInstrInfo::adjustStackPtr(MCRegister SP, int64_t Amount,
   MachineRegisterInfo &RegInfo = MBB.getParent()->getRegInfo();
   const TargetRegisterClass *RC = &Xtensa::ARRegClass;
 
-  // create virtual reg to store immediate
-  MCRegister Reg = RegInfo.createVirtualRegister(RC);
+  MCRegister Reg;
 
   if (isInt<8>(Amount)) { // addi sp, sp, amount
+    Reg = RegInfo.createVirtualRegister(RC);
     BuildMI(MBB, I, DL, get(Xtensa::ADDI), Reg).addReg(SP).addImm(Amount);
   } else { // Expand immediate that doesn't fit in 8-bit.
-    MCRegister Reg1;
-    loadImmediate(MBB, I, &Reg1, Amount);
+    // Reuse the immediate register for the result so this sequence needs only
+    // one scavenged register, including under full physical-register pressure.
+    loadImmediate(MBB, I, &Reg, Amount);
     BuildMI(MBB, I, DL, get(Xtensa::ADD), Reg)
         .addReg(SP)
-        .addReg(Reg1, RegState::Kill);
+        .addReg(Reg, RegState::Kill);
   }
 
   if (STI.isWindowedABI()) {
@@ -218,6 +219,8 @@ void XtensaInstrInfo::loadImmediate(MachineBasicBlock &MBB,
 
 unsigned XtensaInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
   switch (MI.getOpcode()) {
+  case Xtensa::TAILW:
+    return 21 + 3 * llvm::popcount(unsigned(MI.getOperand(0).getImm()));
   case TargetOpcode::INLINEASM: { // Inline Asm: Variable size.
     const MachineFunction *MF = MI.getParent()->getParent();
     const char *AsmStr = MI.getOperand(0).getSymbolName();

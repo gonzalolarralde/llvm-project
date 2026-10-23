@@ -1,0 +1,114 @@
+## Location expressions may refer to any allocated section, while code scopes
+## must remain inside executable sections. Non-allocated and tombstone addresses
+## must not keep discarded globals alive.
+# RUN: yaml2obj %s -o %t.elf
+# RUN: llvm-dwarfutil --no-odr --tombstone=bfd --verify %t.elf %t.classic
+# RUN: llvm-dwarfdump --debug-info %t.classic | FileCheck %s
+# RUN: llvm-dwarfutil --linker=parallel --no-odr --tombstone=bfd --verify %t.elf %t.parallel
+# RUN: llvm-dwarfdump --debug-info %t.parallel | FileCheck %s
+# CHECK: DW_AT_name{{.*}}"live_data"
+# CHECK: DW_AT_location{{.*}}DW_OP_addr 0x2000
+# CHECK: DW_AT_name{{.*}}"live_rodata"
+# CHECK: DW_AT_location{{.*}}DW_OP_addr 0x3000
+# CHECK: DW_AT_name{{.*}}"live_bss"
+# CHECK: DW_AT_location{{.*}}DW_OP_addr 0x4000
+# CHECK-NOT: "dead_
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+  Machine: EM_X86_64
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address: 0x1000
+    Size: 0x10
+  - Name: .data
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_WRITE ]
+    Address: 0x2000
+    Size: 0x10
+  - Name: .rodata
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC ]
+    Address: 0x3000
+    Size: 0x10
+  - Name: .bss
+    Type: SHT_NOBITS
+    Flags: [ SHF_ALLOC, SHF_WRITE ]
+    Address: 0x4000
+    Size: 0x10
+  - Name: .unallocated
+    Type: SHT_PROGBITS
+    Address: 0x5000
+    Size: 0x10
+DWARF:
+  debug_abbrev:
+    - Table:
+      - Tag: DW_TAG_compile_unit
+        Children: DW_CHILDREN_yes
+        Attributes:
+          - Attribute: DW_AT_low_pc
+            Form: DW_FORM_addr
+          - Attribute: DW_AT_high_pc
+            Form: DW_FORM_data8
+      - Tag: DW_TAG_subprogram
+        Children: DW_CHILDREN_no
+        Attributes:
+          - Attribute: DW_AT_name
+            Form: DW_FORM_string
+          - Attribute: DW_AT_low_pc
+            Form: DW_FORM_addr
+          - Attribute: DW_AT_high_pc
+            Form: DW_FORM_data8
+      - Tag: DW_TAG_variable
+        Children: DW_CHILDREN_no
+        Attributes:
+          - Attribute: DW_AT_name
+            Form: DW_FORM_string
+          - Attribute: DW_AT_location
+            Form: DW_FORM_exprloc
+  debug_info:
+    - Version: 4
+      Entries:
+        - AbbrCode: 1
+          Values:
+            - Value: 0x1000
+            - Value: 0x10
+        - AbbrCode: 2
+          Values:
+            - CStr: live_function
+            - Value: 0x1000
+            - Value: 0x10
+        - AbbrCode: 3
+          Values:
+            - CStr: live_data
+            - BlockData: [ 0x3, 0x0, 0x20, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 3
+          Values:
+            - CStr: live_rodata
+            - BlockData: [ 0x3, 0x0, 0x30, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 3
+          Values:
+            - CStr: live_bss
+            - BlockData: [ 0x3, 0x0, 0x40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 3
+          Values:
+            - CStr: dead_unallocated
+            - BlockData: [ 0x3, 0x0, 0x50, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 3
+          Values:
+            - CStr: dead_zero
+            - BlockData: [ 0x3, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 3
+          Values:
+            - CStr: dead_outside
+            - BlockData: [ 0x3, 0x0, 0x60, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0 ]
+        - AbbrCode: 2
+          Values:
+            - CStr: dead_function_in_data
+            - Value: 0x2000
+            - Value: 0x10
+        - AbbrCode: 0

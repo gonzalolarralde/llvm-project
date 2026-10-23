@@ -1,0 +1,66 @@
+## A zero GNU conversion operand denotes the generic type, not a DIE reference.
+## Both DWARF linkers must retain it when rewriting live debug information.
+# RUN: yaml2obj %s -o %t.elf
+# RUN: llvm-dwarfutil --no-odr --linker=classic --verify %t.elf %t.classic.elf
+# RUN: llvm-dwarfdump --debug-info %t.classic.elf | FileCheck %s
+# RUN: llvm-dwarfutil --no-odr --linker=parallel --verify %t.elf %t.parallel.elf
+# RUN: llvm-dwarfdump --debug-info %t.parallel.elf | FileCheck %s
+# CHECK: DW_AT_name{{.*}}"value"
+# CHECK: DW_AT_location{{.*}}DW_OP_constu 0x33, DW_OP_GNU_convert 0x0, DW_OP_stack_value
+
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+  Machine: EM_X86_64
+Sections:
+  - Name: .text
+    Type: SHT_PROGBITS
+    Flags: [ SHF_ALLOC, SHF_EXECINSTR ]
+    Address: 0x1000
+    Size: 0x10
+DWARF:
+  debug_abbrev:
+    - Table:
+      - Tag: DW_TAG_compile_unit
+        Children: DW_CHILDREN_yes
+        Attributes:
+          - Attribute: DW_AT_low_pc
+            Form: DW_FORM_addr
+          - Attribute: DW_AT_high_pc
+            Form: DW_FORM_data8
+      - Tag: DW_TAG_subprogram
+        Children: DW_CHILDREN_yes
+        Attributes:
+          - Attribute: DW_AT_name
+            Form: DW_FORM_string
+          - Attribute: DW_AT_low_pc
+            Form: DW_FORM_addr
+          - Attribute: DW_AT_high_pc
+            Form: DW_FORM_data8
+      - Tag: DW_TAG_variable
+        Children: DW_CHILDREN_no
+        Attributes:
+          - Attribute: DW_AT_name
+            Form: DW_FORM_string
+          - Attribute: DW_AT_location
+            Form: DW_FORM_exprloc
+  debug_info:
+    - Version: 4
+      Entries:
+        - AbbrCode: 1
+          Values:
+            - Value: 0x1000
+            - Value: 0x10
+        - AbbrCode: 2
+          Values:
+            - CStr: function
+            - Value: 0x1000
+            - Value: 0x10
+        - AbbrCode: 3
+          Values:
+            - CStr: value
+            - BlockData: [ 0x10, 0x33, 0xf7, 0x00, 0x9f ]
+        - AbbrCode: 0
+        - AbbrCode: 0

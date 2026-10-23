@@ -1,0 +1,46 @@
+# RUN: llc -mtriple=xtensa-esp32s3-none-elf -run-pass=prolog-epilog -verify-machineinstrs %s -o - | FileCheck %s
+
+# All allocatable registers are live while materializing a distant frame slot.
+# The emergency spill itself must remain directly addressable from the final
+# frame base, rather than being placed near the incoming SP. Otherwise spilling
+# the scratch register needs another scratch register and scavenging recurses.
+# CHECK-LABEL: name: large_frame_scavenge
+# CHECK: S32I killed [[SCRATCH:\$a[0-9]+]], $a7, 0
+# CHECK-NEXT: [[SCRATCH]] = MOVI
+# CHECK-NEXT: [[SCRATCH]] = ADDMI
+# CHECK-NEXT: [[SCRATCH]] = ADD $a7, killed [[SCRATCH]]
+# CHECK-NEXT: S32I $a2, killed [[SCRATCH]], 0
+# CHECK-NEXT: [[SCRATCH]] = L32I $a7, 0
+
+--- |
+  target triple = "xtensa-esp32s3-none-elf"
+  define void @large_frame_scavenge() "frame-pointer"="all" {
+    ret void
+  }
+...
+---
+name: large_frame_scavenge
+tracksRegLiveness: true
+frameInfo:
+  framePointerPolicy: all
+stack:
+  - { id: 0, size: 4, alignment: 4 }
+  - { id: 1, size: 2048, alignment: 16 }
+body: |
+  bb.0:
+    liveins: $a2, $a3, $a4, $a5, $a6, $a8, $a9, $a10, $a11, $a12, $a13, $a14, $a15
+    S32I $a2, %stack.0, 0
+    S32I $a3, $a2, 0
+    S32I $a4, $a2, 4
+    S32I $a5, $a2, 8
+    S32I $a6, $a2, 12
+    S32I $a8, $a2, 16
+    S32I $a9, $a2, 20
+    S32I $a10, $a2, 24
+    S32I $a11, $a2, 28
+    S32I $a12, $a2, 32
+    S32I $a13, $a2, 36
+    S32I $a14, $a2, 40
+    S32I $a15, $a2, 44
+    RETW implicit $a0
+...

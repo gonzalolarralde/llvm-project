@@ -49,6 +49,8 @@ public:
                                        CallingConv::ID) const override;
   BitVector getReservedRegs(const MachineFunction &MF) const override;
 
+  bool hasBasePointer(const MachineFunction &MF) const;
+
   bool eliminateFrameIndex(MachineBasicBlock::iterator MI, int SPAdj,
                            unsigned FIOperandNum,
                            RegScavenger *RS = nullptr) const override;

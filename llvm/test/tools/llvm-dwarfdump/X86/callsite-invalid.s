@@ -1,11 +1,12 @@
 # RUN: llvm-mc -triple x86_64-apple-darwin %s -filetype=obj -o %t.o
 # RUN: not llvm-dwarfdump -verify %t.o 2>&1 | FileCheck %s
 
-# CHECK: error: Subprogram with call site entry has no DW_AT_call attribute:
-# CHECK: DW_TAG_subprogram
-# CHECK:   DW_AT_name ("main")
-# CHECK: DW_TAG_call_site
-# CHECK:   DW_AT_call_origin
+# A partial call-site set needs no completeness assertion. This fixture still
+# has intentionally missing line information; retain those unrelated errors.
+# CHECK-NOT: Subprogram with call site entry has no DW_AT_call attribute
+# CHECK: error: DW_AT_stmt_list offset is beyond .debug_line bounds
+# CHECK: error: File index in DW_AT_decl_file reference CU with no line table
+# CHECK-NOT: Subprogram with call site entry has no DW_AT_call attribute
 # CHECK: Errors detected.
 
 # Source:

@@ -49,8 +49,8 @@ define void @test_saverestore(i64 %n) {
 ; CHECK-WINDOWED-NEXT:    entry a1, 32
 ; CHECK-WINDOWED-NEXT:    or a7, a1, a1
 ; CHECK-WINDOWED-NEXT:    .cfi_def_cfa a7, 32
-; CHECK-WINDOWED-NEXT:    addi a8, a2, 3
-; CHECK-WINDOWED-NEXT:    movi a9, -4
+; CHECK-WINDOWED-NEXT:    addi a8, a2, 15
+; CHECK-WINDOWED-NEXT:    movi a9, -16
 ; CHECK-WINDOWED-NEXT:    and a8, a8, a9
 ; CHECK-WINDOWED-NEXT:    addi a8, a8, 31
 ; CHECK-WINDOWED-NEXT:    movi a9, -32

@@ -553,6 +553,17 @@ private:
     DebugDieValuePool &StringOffsetPool;
     DebugDieValuePool AddrPool;
 
+    struct DeferredExpression {
+      DIEValueList *Output;
+      CompileUnit *Unit;
+      SmallVector<uint8_t, 32> Input;
+      int64_t AddressAdjustment;
+    };
+    SmallVector<DeferredExpression> DeferredExpressions;
+    bool AllDIEsCloned = false;
+    bool HadExpressionError = false;
+
+
     /// Allocator used for all the DIEValue objects.
     BumpPtrAllocator &DIEAlloc;
 

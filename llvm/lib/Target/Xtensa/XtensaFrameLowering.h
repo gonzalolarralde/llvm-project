@@ -25,6 +25,12 @@ class XtensaFrameLowering : public TargetFrameLowering {
 public:
   XtensaFrameLowering(const XtensaSubtarget &STI);
 
+  StackOffset getFrameIndexReference(const MachineFunction &MF, int FI,
+                                    Register &FrameReg) const override;
+
+  bool allocateScavengingFrameIndexesNearIncomingSP(
+      const MachineFunction &MF) const override;
+
   /// emitProlog/emitEpilog - These methods insert prolog and epilog code into
   /// the function.
   void emitPrologue(MachineFunction &, MachineBasicBlock &) const override;

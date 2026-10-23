@@ -14,6 +14,7 @@
 
 #include "Xtensa.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/MacroBuilder.h"
 
 using namespace clang;
@@ -24,11 +25,29 @@ bool XtensaTargetInfo::initFeatureMap(
     const std::vector<std::string> &FeaturesVec) const {
   if (CPU.empty())
     CPU = getTriple().getVendorName() == "esp32s3" ? "esp32s3" : "generic";
+  if (getTriple().getVendorName() == "esp32s3" && CPU != "esp32s3") {
+    Diags.Report(diag::err_target_unsupported_cpu_for_triple)
+        << CPU << getTriple().str();
+    return false;
+  }
   SmallVector<StringRef, 32> CPUFeatures;
   llvm::Xtensa::getCPUFeatures(CPU, CPUFeatures);
   for (StringRef Feature : CPUFeatures)
     Features[Feature.drop_front()] = true;
-  return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
+  if (!TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec))
+    return false;
+
+  // The ESP32-S3 triple selects a fixed windowed application ABI. Validate the
+  // resolved feature map, including per-function attributes, so repeated flags
+  // retain their usual last-option-wins behavior. Instruction-only overrides
+  // such as -s32c1i remain available without changing the calling convention.
+  if (getTriple().getVendorName() == "esp32s3" &&
+      !Features.lookup("windowed")) {
+    Diags.Report(diag::err_target_unsupported_abi_for_triple)
+        << "call0" << getTriple().str();
+    return false;
+  }
+  return true;
 }
 
 bool XtensaTargetInfo::handleTargetFeatures(

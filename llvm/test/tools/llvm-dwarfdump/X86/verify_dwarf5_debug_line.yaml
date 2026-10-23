@@ -2,6 +2,7 @@
 # RUN: llvm-dwarfdump --verbose -verify %t.out | FileCheck %s
 
 # CHECK: Verifying .debug_line...
+# CHECK: No errors.
 
 	.text
 	.file	"dwarf5.c"
@@ -34,6 +35,7 @@ main:                                   # @main
 	.size	main, .Lfunc_end0-main
 	.cfi_endproc
                                         # -- End function
+	.section	.debug_str,"MS",@progbits,1
 .Linfo_string0:
 	.asciz	"clang version 17.0.0" # string offset=0
 .Linfo_string1:

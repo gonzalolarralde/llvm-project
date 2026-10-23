@@ -335,6 +335,8 @@ def warn_dup_category_def : Warning<
 def err_target_unknown_triple : Error<
   "unknown target triple '%0'">;
 def err_target_unknown_cpu : Error<"unknown target CPU '%0'">;
+def err_target_unsupported_cpu_for_triple : Error<
+  "CPU '%0' is not supported for target '%1'">;
 def note_valid_options : Note<"valid target CPU values are: %0">;
 def err_target_unsupported_cpu_for_micromips : Error<
   "micromips is not supported for target CPU '%0'">;

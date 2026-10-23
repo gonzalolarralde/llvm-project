@@ -119,6 +119,7 @@ static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
         (Op->getCode() >= DW_OP_reg0 && Op->getCode() <= DW_OP_reg31) ||
         Op->getCode() == DW_OP_bregx || Op->getCode() == DW_OP_regx ||
         Op->getCode() == DW_OP_regval_type ||
+        Op->getCode() == DW_OP_GNU_regval_type ||
         SubOpcode == DW_OP_LLVM_call_frame_entry_reg ||
         SubOpcode == DW_OP_LLVM_aspace_bregx) {
       if (prettyPrintRegisterOp(U, OS, DumpOpts, Op->getCode(),
@@ -162,6 +163,7 @@ static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
       (Op->getCode() >= DW_OP_reg0 && Op->getCode() <= DW_OP_reg31) ||
       Op->getCode() == DW_OP_bregx || Op->getCode() == DW_OP_regx ||
       Op->getCode() == DW_OP_regval_type ||
+      Op->getCode() == DW_OP_GNU_regval_type ||
       SubOpcode == DW_OP_LLVM_call_frame_entry_reg ||
       SubOpcode == DW_OP_LLVM_aspace_bregx)
     if (prettyPrintRegisterOp(U, OS, DumpOpts, Op->getCode(),
@@ -181,7 +183,9 @@ static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
         // For DW_OP_convert the operand may be 0 to indicate that conversion to
         // the generic type should be done. The same holds for
         // DW_OP_reinterpret, which is currently not supported.
-        if (Op->getCode() == DW_OP_convert && Op->getRawOperand(Operand) == 0)
+        if ((Op->getCode() == DW_OP_convert ||
+             Op->getCode() == DW_OP_GNU_convert) &&
+            Op->getRawOperand(Operand) == 0)
           OS << " 0x0";
         else
           prettyPrintBaseTypeRef(U, OS, DumpOpts, Op->getRawOperands(),
@@ -406,7 +410,8 @@ bool prettyPrintRegisterOp(DWARFUnit *U, raw_ostream &OS,
 
   const bool RegNumFromOperand =
       Opcode == DW_OP_bregx || Opcode == DW_OP_regx ||
-      Opcode == DW_OP_regval_type || SubOpcode == DW_OP_LLVM_aspace_bregx ||
+      Opcode == DW_OP_regval_type || Opcode == DW_OP_GNU_regval_type ||
+      SubOpcode == DW_OP_LLVM_aspace_bregx ||
       SubOpcode == DW_OP_LLVM_call_frame_entry_reg;
 
   if (RegNumFromOperand)
@@ -426,7 +431,7 @@ bool prettyPrintRegisterOp(DWARFUnit *U, raw_ostream &OS,
     else
       OS << ' ' << RegName;
 
-    if (Opcode == DW_OP_regval_type)
+    if (Opcode == DW_OP_regval_type || Opcode == DW_OP_GNU_regval_type)
       prettyPrintBaseTypeRef(U, OS, DumpOpts, Operands, 1);
     return true;
   }

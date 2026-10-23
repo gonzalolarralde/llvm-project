@@ -18,6 +18,7 @@
 #include "XtensaSelectionDAGInfo.h"
 #include "XtensaSubtarget.h"
 #include "XtensaTargetMachine.h"
+#include "llvm/CodeGen/Analysis.h"
 #include "llvm/CodeGen/CallingConvLower.h"
 #include "llvm/CodeGen/MachineFrameInfo.h"
 #include "llvm/CodeGen/MachineInstrBuilder.h"
@@ -25,6 +26,7 @@
 #include "llvm/CodeGen/MachineRegisterInfo.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/IR/GlobalVariable.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/Support/Debug.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
@@ -462,6 +464,88 @@ CCAssignFn *XtensaTargetLowering::CCAssignFnForCall(CallingConv::ID CC,
   return CC_Xtensa_Custom;
 }
 
+// Discover outgoing stack requirements before incoming a6/a7 arguments are
+// assigned. This mirrors the type/flag splitting in LowerCallTo and then uses
+// the same CC callback as real call lowering, instead of counting bytes that
+// will be passed in registers. CCState also records stack-argument alignment.
+void XtensaTargetLowering::analyzeIRCallFrames(MachineFunction &MF) const {
+  const DataLayout &DL = MF.getDataLayout();
+  LLVMContext &Context = MF.getFunction().getContext();
+  uint64_t MaxStackSize = 0;
+  for (const BasicBlock &BB : MF.getFunction()) {
+    for (const Instruction &I : BB) {
+      const auto *CB = dyn_cast<CallBase>(&I);
+      if (!CB || CB->isInlineAsm() ||
+          (CB->getCalledFunction() && CB->getCalledFunction()->isIntrinsic()))
+        continue;
+
+      CallingConv::ID CC = CB->getCallingConv();
+      bool IsVarArg = CB->getFunctionType()->isVarArg();
+      SmallVector<ISD::OutputArg, 16> Outs;
+
+      // LowerCallTo inserts a leading sret pointer when the IR return cannot
+      // use the return registers. Include it before assigning explicit args.
+      SmallVector<ISD::OutputArg, 4> Returns;
+      GetReturnInfo(CC, CB->getType(), CB->getAttributes(), Returns, *this, DL);
+      if (!CanLowerReturn(CC, MF, IsVarArg, Returns, Context, CB->getType())) {
+        ISD::ArgFlagsTy Flags;
+        Flags.setSRet();
+        Flags.setOrigAlign(DL.getPointerABIAlignment(DL.getAllocaAddrSpace()));
+        MVT PtrVT = getPointerTy(DL);
+        Outs.emplace_back(Flags, PtrVT, PtrVT,
+                          PointerType::get(Context, DL.getAllocaAddrSpace()), 0, 0);
+        MF.getFrameInfo().ensureMaxAlignment(DL.getPrefTypeAlign(CB->getType()));
+      }
+
+      for (unsigned Arg = 0; Arg != CB->arg_size(); ++Arg) {
+        Type *ByValTy = CB->getParamByValType(Arg);
+        if (!ByValTy)
+          ByValTy = CB->getParamInAllocaType(Arg);
+        if (!ByValTy)
+          ByValTy = CB->getParamPreallocatedType(Arg);
+        SmallVector<Type *, 4> ArgTypes;
+        ComputeValueTypes(DL, CB->getArgOperand(Arg)->getType(), ArgTypes);
+        for (Type *Ty : ArgTypes) {
+          EVT VT = getValueType(DL, Ty);
+          MVT PartVT = getRegisterTypeForCallingConv(Context, CC, VT);
+          unsigned NumParts = getNumRegistersForCallingConv(Context, CC, VT);
+          ISD::ArgFlagsTy Flags;
+          Flags.setOrigAlign(getABIAlignmentForCallingConv(Ty, DL));
+          if (Arg >= CB->getFunctionType()->getNumParams())
+            Flags.setVarArg();
+          if (CB->paramHasAttr(Arg, Attribute::SExt))
+            Flags.setSExt();
+          if (CB->paramHasAttr(Arg, Attribute::ZExt))
+            Flags.setZExt();
+          if (ByValTy) {
+            Flags.setByVal();
+            Flags.setByValSize(DL.getTypeAllocSize(ByValTy));
+            Flags.setMemAlign(CB->getParamAlign(Arg).value_or(
+                getByValTypeAlignment(ByValTy, DL)));
+          }
+          for (unsigned Part = 0; Part != NumParts; ++Part) {
+            ISD::OutputArg Out(Flags, PartVT, VT, Ty, Arg,
+                              Part * PartVT.getStoreSize().getKnownMinValue());
+            if (NumParts > 1 && Part == 0)
+              Out.Flags.setSplit();
+            else if (Part != 0) {
+              Out.Flags.setOrigAlign(Align(1));
+              if (Part == NumParts - 1)
+                Out.Flags.setSplitEnd();
+            }
+            Outs.push_back(Out);
+          }
+        }
+      }
+      SmallVector<CCValAssign, 16> Locs;
+      CCState State(CC, IsVarArg, MF, Locs, Context);
+      State.AnalyzeCallOperands(Outs, CCAssignFnForCall(CC, IsVarArg));
+      MaxStackSize = std::max(MaxStackSize, State.getStackSize());
+    }
+  }
+  MF.getInfo<XtensaMachineFunctionInfo>()->setHasLargeCallFrame(MaxStackSize > 1008);
+}
+
 SDValue XtensaTargetLowering::LowerFormalArguments(
     SDValue Chain, CallingConv::ID CallConv, bool IsVarArg,
     const SmallVectorImpl<ISD::InputArg> &Ins, const SDLoc &DL,
@@ -469,6 +553,9 @@ SDValue XtensaTargetLowering::LowerFormalArguments(
   MachineFunction &MF = DAG.getMachineFunction();
   MachineFrameInfo &MFI = MF.getFrameInfo();
   XtensaMachineFunctionInfo *XtensaFI = MF.getInfo<XtensaMachineFunctionInfo>();
+
+  if (Subtarget.isWindowedABI())
+    analyzeIRCallFrames(MF);
 
   // Used with vargs to acumulate store chains.
   std::vector<SDValue> OutChains;
@@ -479,6 +566,7 @@ SDValue XtensaTargetLowering::LowerFormalArguments(
                  *DAG.getContext());
 
   CCInfo.AnalyzeFormalArguments(Ins, CCAssignFnForCall(CallConv, IsVarArg));
+  XtensaFI->setIncomingStackBytes(CCInfo.getStackSize());
 
   for (unsigned i = 0, e = ArgLocs.size(); i != e; ++i) {
     CCValAssign &VA = ArgLocs[i];
@@ -499,6 +587,10 @@ SDValue XtensaTargetLowering::LowerFormalArguments(
       if (Subtarget.isWindowedABI() && (VA.getLocReg() == FrameReg)) {
         Reg = MF.addLiveIn(Xtensa::A8, &Xtensa::ARRegClass);
         XtensaFI->setSaveFrameRegister();
+      } else if (Subtarget.getRegisterInfo()->hasBasePointer(MF) &&
+                 VA.getLocReg() == Xtensa::A6) {
+        Reg = MF.addLiveIn(Xtensa::A9, &Xtensa::ARRegClass);
+        XtensaFI->setSaveBaseRegister();
       } else {
         Reg = MF.addLiveIn(VA.getLocReg(), &Xtensa::ARRegClass);
       }
@@ -592,6 +684,10 @@ SDValue XtensaTargetLowering::LowerFormalArguments(
         if (Subtarget.isWindowedABI() && IntRegs[I] == FrameReg) {
           RegInfo.addLiveIn(Xtensa::A8, Reg);
           XtensaFI->setSaveFrameRegister();
+        } else if (Subtarget.getRegisterInfo()->hasBasePointer(MF) &&
+                   IntRegs[I] == Xtensa::A6) {
+          RegInfo.addLiveIn(Xtensa::A9, Reg);
+          XtensaFI->setSaveBaseRegister();
         } else {
           RegInfo.addLiveIn(IntRegs[I], Reg);
         }
@@ -634,9 +730,6 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
   EVT PtrVT = getPointerTy(DAG.getDataLayout());
   const TargetFrameLowering *TFL = Subtarget.getFrameLowering();
 
-  // TODO: Support tail call optimization.
-  IsTailCall = false;
-
   // Analyze the operands of the call, assigning locations to each operand.
   SmallVector<CCValAssign, 16> ArgLocs;
   CCState CCInfo(CallConv, IsVarArg, MF, ArgLocs, *DAG.getContext());
@@ -648,7 +741,125 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
   // Get a count of how many bytes are to be pushed on the stack.
   unsigned NumBytes = CCInfo.getStackSize();
 
+  // A sibling call can reuse the current window when the target's initial
+  // ENTRY is known. Do not infer that contract for external/indirect targets,
+  // replaceable definitions or functions with custom entry instrumentation.
+  const Function &Caller = MF.getFunction();
+  const auto *GA = dyn_cast<GlobalAddressSDNode>(Callee);
+  const auto *CalleeFn = GA ? dyn_cast<Function>(GA->getGlobal()) : nullptr;
+  if (IsTailCall) {
+    IsTailCall = Subtarget.isWindowedABI() &&
+                 Subtarget.getTargetTriple().getVendorName() == "esp32s3" &&
+                 CalleeFn && !CalleeFn->isDeclarationForLinker() &&
+                 !CalleeFn->isInterposable() && !GA->getOffset() &&
+                 !CalleeFn->hasFnAttribute(Attribute::Naked) &&
+                 !CalleeFn->hasPrologueData() &&
+                 !CalleeFn->hasFnAttribute("patchable-function") &&
+                 !CalleeFn->hasFnAttribute("patchable-function-entry") &&
+                 !CalleeFn->hasFnAttribute("patchable-function-prefix") &&
+                 !Caller.hasFnAttribute(Attribute::Naked) &&
+                 !Caller.hasFnAttribute("interrupt") &&
+                 !CalleeFn->hasFnAttribute("interrupt") &&
+                 !Caller.isVarArg() && !IsVarArg &&
+                 Caller.getCallingConv() == CallConv &&
+                 (CallConv == CallingConv::C || CallConv == CallingConv::Swift) &&
+                 !Caller.hasStructRetAttr() &&
+                 NumBytes <= MF.getInfo<XtensaMachineFunctionInfo>()
+                                 ->getIncomingStackBytes();
+    uint64_t ByValBytes = 0;
+    for (const auto &Out : Outs) {
+      if (Out.Flags.isByVal())
+        ByValBytes += Out.Flags.getByValSize();
+      if (Out.Flags.isSRet() || Out.Flags.isNest() || Out.Flags.isInAlloca())
+        IsTailCall = false;
+    }
+    // All byval bytes are read before any incoming slot is replaced. Bound
+    // this expansion rather than introducing a call with live tail arguments.
+    if (ByValBytes > 256)
+      IsTailCall = false;
+    for (const Argument &Arg : Caller.args())
+      if (Arg.hasInAllocaAttr())
+        IsTailCall = false;
+  }
+  if (!IsTailCall && CLI.CB && CLI.CB->isMustTailCall())
+    DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
+        Caller, "Xtensa musttail requires a direct, non-replaceable ESP32-S3 "
+                "windowed definition, matching non-variadic C/Swift convention, "
+                "no sret/nest/inalloca, at most 256 byval bytes, and enough "
+                "incoming stack argument space", DL.getDebugLoc()));
+
+  if (IsTailCall) {
+    // All incoming stack loads must finish before any slot is overwritten.
+    Chain = DAG.getStackArgumentTokenFactor(Chain);
+    MachineFrameInfo &MFI = MF.getFrameInfo();
+    int IncomingSPFI = MFI.CreateFixedObject(4, 0, true);
+    SDValue IncomingSP = DAG.getFrameIndex(IncomingSPFI, PtrVT);
+    SmallVector<std::pair<unsigned, SDValue>, 8> Regs;
+    // Keep arguments in the outgoing registers until the final pseudo. Frame
+    // index operands acquire their FP/BP uses only after register allocation,
+    // so copying an argument to a6/a7 here would permit an early clobber.
+    Regs.emplace_back(Xtensa::A9, IncomingSP);
+    Regs.emplace_back(Xtensa::A8, LowerGlobalAddress(Callee, DAG));
+    SmallVector<std::pair<int, SDValue>, 8> StackValues;
+    SmallVector<SDValue, 8> Loads;
+    SmallVector<SDValue, 8> Stores;
+    unsigned ArgMask = 0;
+    for (unsigned I = 0; I != ArgLocs.size(); ++I) {
+      const auto &VA = ArgLocs[I];
+      if (VA.isRegLoc()) {
+        ArgMask |= 1u << (VA.getLocReg() - Xtensa::A2);
+        Regs.emplace_back(toCallerWindow(VA.getLocReg()), OutVals[I]);
+      } else if (Outs[I].Flags.isByVal()) {
+        const auto &Flags = Outs[I].Flags;
+        unsigned Size = Flags.getByValSize();
+        for (unsigned Offset = 0; Offset < Size;) {
+          Align Alignment = commonAlignment(Flags.getNonZeroByValAlign(), Offset);
+          unsigned Part = std::min(4u, unsigned(Alignment.value()));
+          while (Part > Size - Offset)
+            Part /= 2;
+          EVT VT = EVT::getIntegerVT(*DAG.getContext(), Part * 8);
+          SDValue Address = DAG.getNode(ISD::ADD, DL, PtrVT, OutVals[I],
+                                        DAG.getIntPtrConstant(Offset, DL));
+          SDValue Value = DAG.getLoad(VT, DL, Chain, Address,
+                                      MachinePointerInfo(), Alignment);
+          Loads.push_back(Value.getValue(1));
+          int FI = MFI.CreateFixedObject(Part, VA.getLocMemOffset() + Offset,
+                                        false);
+          StackValues.emplace_back(FI, Value);
+          Offset += Part;
+        }
+      } else {
+        int FI = MFI.CreateFixedObject(VA.getLocVT().getStoreSize(),
+                                      VA.getLocMemOffset(), false);
+        StackValues.emplace_back(FI, OutVals[I]);
+      }
+    }
+    if (!Loads.empty())
+      Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Loads);
+    for (const auto &[FI, Value] : StackValues)
+      Stores.push_back(DAG.getStore(Chain, DL, Value,
+                                    DAG.getFrameIndex(FI, PtrVT),
+                                    MachinePointerInfo::getFixedStack(MF, FI)));
+    if (!Stores.empty())
+      Chain = DAG.getNode(ISD::TokenFactor, DL, MVT::Other, Stores);
+    SDValue Glue;
+    SmallVector<SDValue, 10> Ops;
+    Ops.push_back(Chain);
+    Ops.push_back(DAG.getTargetConstant(ArgMask, DL, MVT::i32));
+    for (const auto &[Reg, Value] : Regs) {
+      Chain = DAG.getCopyToReg(Chain, DL, Reg, Value, Glue);
+      Glue = Chain.getValue(1);
+      Ops.push_back(DAG.getRegister(Reg, Value.getValueType()));
+    }
+    Ops[0] = Chain;
+    Ops.push_back(Glue);
+    MFI.setHasTailCall();
+    return DAG.getNode(XtensaISD::TAILW, DL, MVT::Other, Ops);
+  }
+
   Align StackAlignment = TFL->getStackAlign();
+  if (Subtarget.isWindowedABI())
+    StackAlignment = std::max(StackAlignment, MF.getFrameInfo().getMaxAlign());
   unsigned NextStackOffset = alignTo(NumBytes, StackAlignment);
 
   Chain = DAG.getCALLSEQ_START(Chain, NextStackOffset, 0, DL);
@@ -679,9 +890,11 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
                                     DAG.getIntPtrConstant(Offset, DL));
       SDValue SizeNode = DAG.getConstant(Flags.getByValSize(), DL, MVT::i32);
       Align Alignment = Flags.getNonZeroByValAlign();
+      // This copy is inside the call sequence. A memcpy libcall would create
+      // nested call-frame adjustments, so emit the constant-sized copy inline.
       SDValue Memcpy = DAG.getMemcpy(
           Chain, DL, Address, ArgValue, SizeNode, Alignment, Alignment,
-          /*isVolatile=*/false, /*AlwaysInline=*/false,
+          /*isVolatile=*/false, /*AlwaysInline=*/true,
           /*CI=*/nullptr, std::nullopt, MachinePointerInfo(),
           MachinePointerInfo());
       MemOpChains.push_back(Memcpy);
@@ -781,8 +994,9 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
   Glue = Chain.getValue(1);
 
   // Mark the end of the call, which is glued to the call itself.
-  Chain = DAG.getCALLSEQ_END(Chain, DAG.getConstant(NumBytes, DL, PtrVT, true),
-                             DAG.getConstant(0, DL, PtrVT, true), Glue, DL);
+  Chain = DAG.getCALLSEQ_END(
+      Chain, DAG.getConstant(NextStackOffset, DL, PtrVT, true),
+      DAG.getConstant(0, DL, PtrVT, true), Glue, DL);
   Glue = Chain.getValue(1);
 
   // Assign locations to each value returned by this call.
@@ -992,7 +1206,7 @@ SDValue XtensaTargetLowering::LowerImmediate(SDValue Op,
   int64_t Value = APVal.getSExtValue();
   if (Op.getValueType() == MVT::i32) {
     // Check if use node maybe lowered to the MOVI instruction
-    if (Value > -2048 && Value <= 2047)
+    if (isInt<12>(Value))
       return Op;
     // Check if use node maybe lowered to the ADDMI instruction
     SDNode &OpNode = *Op.getNode();
@@ -1241,6 +1455,14 @@ SDValue XtensaTargetLowering::LowerDYNAMIC_STACKALLOC(SDValue Op,
   SDValue SP = DAG.getCopyFromReg(Chain, DL, SPReg, VT);
   SDValue NewSP = DAG.getNode(ISD::SUB, DL, VT, SP, SizeRoundUp); // Value
   if (Subtarget.isWindowedABI()) {
+    // Outgoing byval arguments can require a stronger alignment than the
+    // alloca itself. Preserve that alignment as SP moves within the function.
+    uint64_t Alignment = std::max(
+        Op.getConstantOperandVal(2),
+        DAG.getMachineFunction().getFrameInfo().getMaxAlign().value());
+    if (Alignment > Subtarget.getFrameLowering()->getStackAlign().value())
+      NewSP = DAG.getNode(ISD::AND, DL, VT, NewSP,
+                          DAG.getSignedConstant(-int64_t(Alignment), DL, VT));
     Chain = DAG.getNode(XtensaISD::MOVSP, SDLoc(Op), MVT::Other, SP.getValue(1),
                         NewSP);
   } else {
@@ -1618,6 +1840,12 @@ XtensaTargetLowering::emitSelectCC(MachineInstr &MI,
 
   F->insert(It, CopyMBB);
   F->insert(It, SinkMBB);
+
+  // The select can occur inside an outgoing call frame. Preserve its size
+  // on entry to both new blocks, including the block with ADJCALLSTACKUP.
+  unsigned CallFrameSize = TII.getCallFrameSizeAt(MI);
+  CopyMBB->setCallFrameSize(CallFrameSize);
+  SinkMBB->setCallFrameSize(CallFrameSize);
 
   // Transfer the remainder of MBB and its successor edges to SinkMBB.
   SinkMBB->splice(SinkMBB->begin(), MBB,

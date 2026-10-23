@@ -927,12 +927,16 @@ HANDLE_DW_OP(0xe8, INTEL_bit_piece, -1, -1, 0, INTEL)
 // Extensions for WebAssembly.
 HANDLE_DW_OP(0xed, WASM_location, -1, -1, 0, WASM)
 HANDLE_DW_OP(0xee, WASM_location_int, -1, -1, 0, WASM)
-// Historic and not implemented in LLVM.
-HANDLE_DW_OP(0xf0, APPLE_uninit, -1, -1, 0, APPLE)
+// Also used as DW_OP_GNU_uninit; both mark an uninitialized value.
+HANDLE_DW_OP(0xf0, APPLE_uninit, 0, 0, 0, APPLE)
 HANDLE_DW_OP(0xf2, GNU_implicit_pointer, 2, 0, 4, GNU)
 // The GNU entry value extension.
 HANDLE_DW_OP(0xf3, GNU_entry_value, 2, 0, 0, GNU)
+HANDLE_DW_OP(0xf5, GNU_regval_type, 2, 0, 0, GNU)
+HANDLE_DW_OP(0xf6, GNU_deref_type, 2, 1, 0, GNU)
+HANDLE_DW_OP(0xf7, GNU_convert, 2, 1, 0, GNU)
 HANDLE_DW_OP(0xf8, PGI_omp_thread_num, -1, -1, 0, PGI)
+HANDLE_DW_OP(0xfa, GNU_parameter_ref, 1, 0, 0, GNU)
 // Extensions for Fission proposal.
 HANDLE_DW_OP(0xfb, GNU_addr_index, 1, 0, 0, GNU)
 HANDLE_DW_OP(0xfc, GNU_const_index, 1, 0, 0, GNU)

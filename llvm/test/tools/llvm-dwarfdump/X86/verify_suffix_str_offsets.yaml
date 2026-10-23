@@ -1,0 +1,83 @@
+# RUN: split-file %s %t
+# RUN: yaml2obj %t/v5.yaml -o %t/suffix.o
+# RUN: llvm-dwarfdump --verify %t/suffix.o | FileCheck %s --check-prefix=VALID
+# RUN: yaml2obj %t/v5.yaml -D OFFSET=3 -o %t/empty-string.o
+# RUN: llvm-dwarfdump --verify %t/empty-string.o | FileCheck %s --check-prefix=VALID
+# RUN: yaml2obj %t/v5.yaml -D OFFSET=4 -o %t/past-end.o
+# RUN: not llvm-dwarfdump --verify %t/past-end.o | FileCheck %s --check-prefix=BOUNDS
+# RUN: yaml2obj %t/v5.yaml -D STRING=666F6F -o %t/unterminated.o
+# RUN: not llvm-dwarfdump --verify %t/unterminated.o | FileCheck %s --check-prefix=UNTERMINATED
+# RUN: yaml2obj %t/v5.yaml -D STRING='' -D OFFSET=0 -o %t/empty-section.o
+# RUN: not llvm-dwarfdump --verify %t/empty-section.o | FileCheck %s --check-prefix=BOUNDS
+# RUN: yaml2obj %t/v5.yaml -D FORMAT=DWARF64 -o %t/suffix64.o
+# RUN: llvm-dwarfdump --verify %t/suffix64.o | FileCheck %s --check-prefix=VALID
+# RUN: yaml2obj %t/v4.yaml -o %t/legacy.o
+# RUN: llvm-dwarfdump --verify %t/legacy.o | FileCheck %s --check-prefix=VALID
+# RUN: yaml2obj %t/v4-64.yaml -o %t/legacy64.o
+# RUN: llvm-dwarfdump --verify %t/legacy64.o | FileCheck %s --check-prefix=VALID
+
+## Offset 1 points to "oo" within "foo"; suffix sharing is valid in both
+## DWARF 5 and the headerless GNU split-DWARF string-offset tables.
+## A terminator itself denotes an empty string. An empty section, offset at
+## the section end, or missing terminator must still fail verification.
+# VALID-NOT: error:
+# VALID: No errors.
+# BOUNDS: error: {{.*}}is beyond the bounds of the string section
+# BOUNDS: Errors detected.
+# UNTERMINATED: error: {{.*}}is not followed by a null terminator within the string section
+# UNTERMINATED: Errors detected.
+
+#--- v5.yaml
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+Sections:
+  - Name: .debug_str
+    Type: SHT_PROGBITS
+    Content: '[[STRING=666F6F00]]'
+DWARF:
+  debug_str_offsets:
+    - Format: [[FORMAT=DWARF32]]
+      Offsets: [ [[OFFSET=1]] ]
+
+#--- v4.yaml
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+Sections:
+  - Name: .debug_info.dwo
+    Type: SHT_PROGBITS
+    Content: '080000000400000000000401'
+  - Name: .debug_abbrev.dwo
+    Type: SHT_PROGBITS
+    Content: '011100000000'
+  - Name: .debug_str_offsets.dwo
+    Type: SHT_PROGBITS
+    Content: '01000000'
+  - Name: .debug_str.dwo
+    Type: SHT_PROGBITS
+    Content: '666F6F00'
+
+#--- v4-64.yaml
+--- !ELF
+FileHeader:
+  Class: ELFCLASS64
+  Data: ELFDATA2LSB
+  Type: ET_EXEC
+Sections:
+  - Name: .debug_info.dwo
+    Type: SHT_PROGBITS
+    Content: 'FFFFFFFF0C00000000000000040000000000000000000801'
+  - Name: .debug_abbrev.dwo
+    Type: SHT_PROGBITS
+    Content: '011100000000'
+  - Name: .debug_str_offsets.dwo
+    Type: SHT_PROGBITS
+    Content: '0100000000000000'
+  - Name: .debug_str.dwo
+    Type: SHT_PROGBITS
+    Content: '666F6F00'

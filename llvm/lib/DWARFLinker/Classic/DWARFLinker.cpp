@@ -829,6 +829,40 @@ void DWARFLinker::markODRCanonicalDie(const DWARFDie &Die, CompileUnit &CU) {
     Info.Ctxt->setHasCanonicalDIE();
 }
 
+// References embedded in expressions are dependencies just like reference
+// attributes. The operand index also identifies the exact encoded byte span;
+// a register operand preceding a type reference can itself be a multi-byte ULEB.
+struct ExpressionDIEReference {
+  unsigned Operand;
+  bool IsAbsolute;
+  bool IsULEB;
+};
+
+static std::optional<ExpressionDIEReference>
+getExpressionDIEReference(const DWARFExpression::Operation &Op) {
+  using Encoding = DWARFExpression::Operation::Encoding;
+  for (auto [I, Kind] : enumerate(Op.getDescription().Op))
+    if (Kind == Encoding::BaseTypeRef) {
+      if (Op.getRawOperand(I) == 0 &&
+          (Op.getCode() == dwarf::DW_OP_convert ||
+           Op.getCode() == dwarf::DW_OP_GNU_convert))
+        return std::nullopt;
+      return ExpressionDIEReference{unsigned(I), false, true};
+    }
+  switch (Op.getCode()) {
+  case dwarf::DW_OP_GNU_parameter_ref:
+  case dwarf::DW_OP_call2:
+  case dwarf::DW_OP_call4:
+    return ExpressionDIEReference{0, false, false};
+  case dwarf::DW_OP_call_ref:
+  case dwarf::DW_OP_implicit_pointer:
+  case dwarf::DW_OP_GNU_implicit_pointer:
+    return ExpressionDIEReference{0, true, false};
+  default:
+    return std::nullopt;
+  }
+}
+
 /// Look at DIEs referenced by the given DIE and decide whether they should be
 /// kept. All DIEs referenced though attributes should be kept.
 void DWARFLinker::lookForRefDIEsToKeep(
@@ -878,6 +912,41 @@ void DWARFLinker::lookForRefDIEsToKeep(
             Info.Ctxt->hasCanonicalDIE()))
         Info.Prune = false;
       ReferencedDIEs.emplace_back(RefDie, *ReferencedCU);
+    }
+  }
+
+  // Scan both inline expressions and location lists. This includes nested
+  // entry-value operations: DWARFExpression visits their contained operations.
+  for (const auto &AttrSpec : Abbrev->attributes()) {
+    if (!DWARFAttribute::mayHaveLocationExpr(AttrSpec.Attr) &&
+        !DWARFAttribute::mayHaveLocationList(AttrSpec.Attr))
+      continue;
+    auto Locations = Die.getLocations(AttrSpec.Attr);
+    if (!Locations) {
+      consumeError(Locations.takeError());
+      continue;
+    }
+    for (const auto &Location : *Locations) {
+      DWARFExpression Expr(DataExtractor(Location.Expr, Unit.isLittleEndian()),
+                           Unit.getAddressByteSize(), Unit.getFormat());
+      for (const auto &Op : Expr) {
+        if (Op.isError())
+          break;
+        auto Ref = getExpressionDIEReference(Op);
+        if (!Ref)
+          continue;
+        uint64_t RefOffset = Op.getRawOperand(Ref->Operand);
+        if (!Ref->IsAbsolute)
+          RefOffset += Unit.getOffset();
+        CompileUnit *RefCU =
+            Ref->IsAbsolute ? getUnitForOffset(Units, RefOffset) : &CU;
+        if (!RefCU)
+          continue;
+        if (auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset)) {
+          RefCU->getInfo(RefDie).Prune = false;
+          ReferencedDIEs.emplace_back(RefDie, *RefCU);
+        }
+      }
     }
   }
 
@@ -1243,62 +1312,96 @@ void DWARFLinker::DIECloner::cloneExpression(
     DataExtractor &Data, DWARFExpression Expression, const DWARFFile &File,
     CompileUnit &Unit, SmallVectorImpl<uint8_t> &OutputBuffer,
     int64_t AddrRelocAdjustment, bool IsLittleEndian) {
-  using Encoding = DWARFExpression::Operation::Encoding;
+  if (Linker.Options.Update) {
+    StringRef Bytes = Data.getData();
+    OutputBuffer.append(Bytes.begin(), Bytes.end());
+    return;
+  }
 
   uint8_t OrigAddressByteSize = Unit.getOrigUnit().getAddressByteSize();
+  DenseMap<uint64_t, uint64_t> OffsetMap;
+  struct BranchFixup {
+    uint64_t OperandOffset;
+    int64_t Target;
+  };
+  SmallVector<BranchFixup> Branches;
+  auto Fail = [&](StringRef Message) {
+    HadExpressionError = true;
+    Linker.reportWarning(Message, File);
+  };
+  auto AppendInteger = [&](uint64_t Value, unsigned Size) {
+    for (unsigned I = 0; I != Size; ++I)
+      OutputBuffer.push_back(Value >>
+                             (8 * (IsLittleEndian ? I : Size - I - 1)));
+  };
 
-  uint64_t OpOffset = 0;
-  for (auto &Op : Expression) {
-    auto Desc = Op.getDescription();
-    // DW_OP_const_type is variable-length and has 3
-    // operands. Thus far we only support 2.
-    if ((Desc.Op.size() == 2 && Desc.Op[0] == Encoding::BaseTypeRef) ||
-        (Desc.Op.size() == 2 && Desc.Op[1] == Encoding::BaseTypeRef &&
-         Desc.Op[0] != Encoding::Size1))
-      Linker.reportWarning("Unsupported DW_OP encoding.", File);
-
-    if ((Desc.Op.size() == 1 && Desc.Op[0] == Encoding::BaseTypeRef) ||
-        (Desc.Op.size() == 2 && Desc.Op[1] == Encoding::BaseTypeRef &&
-         Desc.Op[0] == Encoding::Size1)) {
-      // This code assumes that the other non-typeref operand fits into 1 byte.
-      assert(OpOffset < Op.getEndOffset());
-      uint32_t ULEBsize = Op.getEndOffset() - OpOffset - 1;
-      assert(ULEBsize <= 16);
-
-      // Copy over the operation.
-      assert(!Op.getSubCode() && "SubOps not yet supported");
+  for (auto It = Expression.begin(); It != Expression.end();) {
+    const auto &Op = *It;
+    uint64_t OpOffset = It.getOffset();
+    OffsetMap[OpOffset] = OutputBuffer.size();
+    if (Op.isError()) {
+      Fail("cannot rewrite an invalid DWARF expression.");
+      return;
+    }
+    if (Op.getCode() == dwarf::DW_OP_entry_value ||
+        Op.getCode() == dwarf::DW_OP_GNU_entry_value) {
+      uint64_t Size = Op.getRawOperand(0);
+      if (Size > Data.getData().size() - Op.getEndOffset()) {
+        Fail("entry-value expression extends past its block.");
+        return;
+      }
+      DataExtractor NestedData(Data.getData().substr(Op.getEndOffset(), Size),
+                               IsLittleEndian);
+      DWARFExpression NestedExpr(NestedData, OrigAddressByteSize,
+                                 Unit.getOrigUnit().getFormat());
+      SmallVector<uint8_t> NestedOutput;
+      cloneExpression(NestedData, NestedExpr, File, Unit, NestedOutput,
+                      AddrRelocAdjustment, IsLittleEndian);
       OutputBuffer.push_back(Op.getCode());
-      uint64_t RefOffset;
-      if (Desc.Op.size() == 1) {
-        RefOffset = Op.getRawOperand(0);
-      } else {
-        OutputBuffer.push_back(Op.getRawOperand(0));
-        RefOffset = Op.getRawOperand(1);
-      }
-      uint32_t Offset = 0;
-      // Look up the base type. For DW_OP_convert, the operand may be 0 to
-      // instead indicate the generic type. The same holds for
-      // DW_OP_reinterpret, which is currently not supported.
-      if (RefOffset > 0 || Op.getCode() != dwarf::DW_OP_convert) {
+      uint8_t Length[10];
+      unsigned LengthSize = encodeULEB128(NestedOutput.size(), Length);
+      OutputBuffer.append(Length, Length + LengthSize);
+      OutputBuffer.append(NestedOutput);
+      It = It.skipBytes(Size);
+      continue;
+    }
+    if (auto Ref = getExpressionDIEReference(Op)) {
+      uint64_t RefStart = Ref->Operand == 0
+                              ? OpOffset + 1
+                              : Op.getOperandEndOffset(Ref->Operand - 1);
+      uint64_t RefEnd = Op.getOperandEndOffset(Ref->Operand);
+      StringRef Prefix = Data.getData().slice(OpOffset, RefStart);
+      OutputBuffer.append(Prefix.begin(), Prefix.end());
+      uint64_t RefOffset = Op.getRawOperand(Ref->Operand);
+      if (!Ref->IsAbsolute)
         RefOffset += Unit.getOrigUnit().getOffset();
-        auto RefDie = Unit.getOrigUnit().getDIEForOffset(RefOffset);
-        CompileUnit::DIEInfo &Info = Unit.getInfo(RefDie);
-        if (DIE *Clone = Info.Clone)
-          Offset = Clone->getOffset();
-        else
-          Linker.reportWarning(
-              "base type ref doesn't point to DW_TAG_base_type.", File);
+      CompileUnit *RefCU =
+          Ref->IsAbsolute ? getUnitForOffset(CompileUnits, RefOffset) : &Unit;
+      uint64_t Offset = 0;
+      DIE *Clone = nullptr;
+      if (RefCU)
+        if (auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset))
+          Clone = RefCU->getInfo(RefDie).Clone;
+      if (Clone && AllDIEsCloned)
+        Offset = Clone->getOffset() +
+                 (Ref->IsAbsolute ? RefCU->getStartOffset() : 0);
+      else if (!Clone && AllDIEsCloned)
+        Fail("expression reference does not point to a retained DIE.");
+      if (Ref->IsULEB) {
+        // Reserve a stable width while laying out forward DIE references.
+        uint8_t ULEB[10];
+        unsigned Size = encodeULEB128(Offset, ULEB, 5);
+        if (Size != 5)
+          Fail("expression type reference exceeds DWARF32.");
+        OutputBuffer.append(ULEB, ULEB + Size);
+      } else {
+        unsigned Size = RefEnd - RefStart;
+        if (Size < 8 && Offset >= (uint64_t(1) << (Size * 8)))
+          Fail("expression DIE reference does not fit its operand.");
+        AppendInteger(Offset, Size);
       }
-      uint8_t ULEB[16];
-      unsigned RealSize = encodeULEB128(Offset, ULEB, ULEBsize);
-      if (RealSize > ULEBsize) {
-        // Emit the generic type as a fallback.
-        RealSize = encodeULEB128(0, ULEB, ULEBsize);
-        Linker.reportWarning("base type ref doesn't fit.", File);
-      }
-      assert(RealSize == ULEBsize && "padding failed");
-      ArrayRef<uint8_t> ULEBbytes(ULEB, ULEBsize);
-      OutputBuffer.append(ULEBbytes.begin(), ULEBbytes.end());
+      StringRef Suffix = Data.getData().slice(RefEnd, Op.getEndOffset());
+      OutputBuffer.append(Suffix.begin(), Suffix.end());
     } else if (!Linker.Options.Update && Op.getCode() == dwarf::DW_OP_addrx) {
       if (std::optional<object::SectionedAddress> SA =
               Unit.getOrigUnit().getAddrOffsetSectionItem(
@@ -1366,8 +1469,29 @@ void DWARFLinker::DIECloner::cloneExpression(
       // Copy over everything else unmodified.
       StringRef Bytes = Data.getData().slice(OpOffset, Op.getEndOffset());
       OutputBuffer.append(Bytes.begin(), Bytes.end());
+      if (Op.getCode() == dwarf::DW_OP_bra || Op.getCode() == dwarf::DW_OP_skip)
+        Branches.push_back(
+            {OutputBuffer.size() - 2,
+             int64_t(Op.getEndOffset()) + int16_t(Op.getRawOperand(0))});
     }
-    OpOffset = Op.getEndOffset();
+    ++It;
+  }
+  OffsetMap[Data.getData().size()] = OutputBuffer.size();
+  for (auto Branch : Branches) {
+    auto Target = OffsetMap.find(Branch.Target);
+    if (Target == OffsetMap.end()) {
+      Fail("expression branch does not target an operation boundary.");
+      continue;
+    }
+    int64_t Displacement =
+        int64_t(Target->second) - int64_t(Branch.OperandOffset + 2);
+    if (!isInt<16>(Displacement)) {
+      Fail("rewritten expression branch displacement does not fit.");
+      continue;
+    }
+    for (unsigned I = 0; I != 2; ++I)
+      OutputBuffer[Branch.OperandOffset + I] =
+          uint16_t(Displacement) >> (8 * (IsLittleEndian ? I : 1 - I));
   }
 }
 
@@ -1402,6 +1526,10 @@ unsigned DWARFLinker::DIECloner::cloneBlockAttribute(
                          OrigUnit.getFormParams().Format);
     cloneExpression(Data, Expr, File, Unit, Buffer,
                     Unit.getInfo(InputDIE).AddrAdjust, IsLittleEndian);
+    if (!Update)
+      DeferredExpressions.push_back(
+          {Attr, &Unit, SmallVector<uint8_t, 32>(Bytes),
+           Unit.getInfo(InputDIE).AddrAdjust});
     Bytes = Buffer;
   }
   for (auto Byte : Bytes)
@@ -1723,6 +1851,14 @@ unsigned DWARFLinker::DIECloner::cloneAttribute(
   case dwarf::DW_FORM_ref8:
     return cloneDieReferenceAttribute(Die, InputDIE, AttrSpec, AttrSize, Val,
                                       File, Unit);
+  case dwarf::DW_FORM_ref_udata: {
+    // A reference can grow after cloning. Reserve a fixed-width reference so
+    // a forward reference does not change the offsets of subsequent DIEs.
+    auto FixedSpec = AttrSpec;
+    FixedSpec.Form = dwarf::DW_FORM_ref4;
+    return cloneDieReferenceAttribute(Die, InputDIE, FixedSpec, 4, Val, File,
+                                      Unit);
+  }
   case dwarf::DW_FORM_block:
   case dwarf::DW_FORM_block1:
   case dwarf::DW_FORM_block2:
@@ -1932,6 +2068,15 @@ DIE *DWARFLinker::DIECloner::cloneDIE(const DWARFDie &InputDIE,
   }
 
   uint16_t Tag = InputDIE.getTag();
+  if (!Update && Tag == dwarf::DW_TAG_compile_unit && U.getVersion() >= 5 &&
+      !InputDIE.find(dwarf::DW_AT_addr_base)) {
+    // Rewritten range and location lists use address indices even when the
+    // input used only direct addresses. Reserve the base before laying out
+    // children; adding it when emitting the address pool is too late.
+    Die->addValue(DIEAlloc, dwarf::DW_AT_addr_base, dwarf::DW_FORM_sec_offset,
+                  DIEInteger(0));
+    OutOffset += U.getDwarfOffsetByteSize();
+  }
   // Add the DW_AT_APPLE_origin attribute to Compile Unit die if we have
   // an install name and the DWARF doesn't have the attribute yet.
   const bool NeedsAppleOrigin = (Tag == dwarf::DW_TAG_compile_unit) &&
@@ -2215,7 +2360,9 @@ Error DWARFLinker::DIECloner::emitDebugAddrSection(
   if (DwarfVersion < 5)
     return Error::success();
 
-  if (AddrPool.getValues().empty())
+  // A unit with only types may have an empty pool. Its reserved addr_base must
+  // still refer to a valid contribution.
+  if (!Unit.getOutputUnitDIE())
     return Error::success();
 
   MCSymbol *EndLabel = Emitter->emitDwarfDebugAddrsHeader(Unit);
@@ -2914,6 +3061,9 @@ Expected<uint64_t> DWARFLinker::DIECloner::cloneAllCompileUnits(
   uint64_t OutputDebugInfoSize =
       (Emitter == nullptr) ? 0 : Emitter->getDebugInfoSectionSize();
   const uint64_t StartOutputDebugInfoSize = OutputDebugInfoSize;
+  std::vector<DebugDieValuePool> UnitAddrPools;
+  AllDIEsCloned = false;
+  HadExpressionError = false;
 
   for (auto &CurrentUnit : CompileUnits) {
     const uint16_t DwarfVersion = CurrentUnit->getOrigUnit().getVersion();
@@ -2922,6 +3072,7 @@ Expected<uint64_t> DWARFLinker::DIECloner::cloneAllCompileUnits(
     CurrentUnit->setStartOffset(OutputDebugInfoSize);
     if (!InputDIE) {
       OutputDebugInfoSize = CurrentUnit->computeNextUnitOffset(DwarfVersion);
+      UnitAddrPools.emplace_back();
       continue;
     }
     if (CurrentUnit->getInfo(0).Keep) {
@@ -2934,7 +3085,33 @@ Expected<uint64_t> DWARFLinker::DIECloner::cloneAllCompileUnits(
     }
 
     OutputDebugInfoSize = CurrentUnit->computeNextUnitOffset(DwarfVersion);
+    UnitAddrPools.push_back(std::move(AddrPool));
+    AddrPool = DebugDieValuePool();
+  }
 
+  AllDIEsCloned = true;
+  for (auto &Deferred : DeferredExpressions) {
+    DataExtractor Data(Deferred.Input, IsLittleEndian);
+    DWARFUnit &OrigUnit = Deferred.Unit->getOrigUnit();
+    SmallVector<uint8_t> Bytes;
+    cloneExpression(Data,
+                    DWARFExpression(Data, OrigUnit.getAddressByteSize(),
+                                    OrigUnit.getFormat()),
+                    File, *Deferred.Unit, Bytes, Deferred.AddressAdjustment,
+                    IsLittleEndian);
+    auto Values = Deferred.Output->values();
+    if (std::distance(Values.begin(), Values.end()) != int64_t(Bytes.size()))
+      return createStringError("expression size changed after DIE layout");
+    for (auto [Value, Byte] : zip(Values, Bytes))
+      Value =
+          DIEValue(dwarf::Attribute(0), dwarf::DW_FORM_data1, DIEInteger(Byte));
+  }
+  DeferredExpressions.clear();
+
+  for (size_t Index = 0; Index != CompileUnits.size(); ++Index) {
+    auto &CurrentUnit = CompileUnits[Index];
+    AddrPool = std::move(UnitAddrPools[Index]);
+    const uint16_t DwarfVersion = CurrentUnit->getOrigUnit().getVersion();
     if (Emitter != nullptr) {
 
       if (Error E = generateLineTableForUnit(*CurrentUnit))
@@ -2966,6 +3143,9 @@ Expected<uint64_t> DWARFLinker::DIECloner::cloneAllCompileUnits(
     }
     AddrPool.clear();
   }
+
+  if (HadExpressionError)
+    return createStringError("could not preserve DWARF expression references");
 
   if (Emitter != nullptr) {
     assert(Emitter);
@@ -3209,7 +3389,7 @@ Error DWARFLinker::link() {
               .cloneAllCompileUnits(*OptContext.File.Dwarf, OptContext.File,
                                     OptContext.File.Dwarf->isLittleEndian());
       if (!SizeOrErr) {
-        CE = SizeOrErr.takeError();
+        CE = joinErrors(std::move(CE), SizeOrErr.takeError());
         return;
       }
       SizeByObject[OptContext.File.FileName].Output = *SizeOrErr;

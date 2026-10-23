@@ -10,6 +10,8 @@
 #define LLDB_SOURCE_PLUGINS_ARCHITECTURE_XTENSA_ARCHITECTUREXTENSA_H
 
 #include "lldb/Core/Architecture.h"
+#include "llvm/ADT/ArrayRef.h"
+#include <optional>
 
 namespace lldb_private {
 
@@ -20,6 +22,16 @@ public:
   static void Terminate();
   llvm::StringRef GetPluginName() override { return GetPluginNameStatic(); }
   void OverrideStopInfo(Thread &) const override {}
+
+  // Decode the canonical three-byte ENTRY a1, imm used by windowed frames.
+  // A partial read or an ENTRY with a different SP operand is not sufficient.
+  static std::optional<uint32_t>
+  DecodeEntryFrameSize(llvm::ArrayRef<uint8_t> bytes);
+
+  // A complete function body must prove that no path revisits ENTRY or its
+  // first body instruction before transient overlap registers can be trusted.
+  static bool EntryBoundaryCannotBeRevisited(const ArchSpec &arch,
+                                             llvm::ArrayRef<uint8_t> bytes);
 
   lldb::UnwindPlanSP GetArchitectureUnwindPlan(
       Thread &thread, RegisterContextUnwind *regctx,

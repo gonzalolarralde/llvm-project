@@ -486,9 +486,15 @@ Error DwarfStreamer::emitDwarfDebugRangesTableFragment(
   unsigned AddressSize = Unit.getOrigUnit().getAddressByteSize();
 
   // Emit ranges.
-  uint64_t BaseAddress = 0;
-  if (std::optional<uint64_t> LowPC = Unit.getLowPc())
-    BaseAddress = *LowPC;
+  uint64_t BaseAddress = Unit.getLowPc().value_or(0);
+  const DIE *CUDie = Unit.getOutputUnitDIE();
+  if (!CUDie || !CUDie->findAttribute(dwarf::DW_AT_low_pc)) {
+    // A computed minimum live PC is not an implicit list base. Declare it
+    // explicitly when the CU has no DW_AT_low_pc (common in assembler DWARF).
+    MS->emitIntValue(dwarf::computeTombstoneAddress(AddressSize), AddressSize);
+    MS->emitIntValue(BaseAddress, AddressSize);
+    RangesSectionSize += 2 * AddressSize;
+  }
 
   for (const AddressRange &Range : LinkedRanges) {
     MS->emitIntValue(Range.start() - BaseAddress, AddressSize);
@@ -689,9 +695,15 @@ Error DwarfStreamer::emitDwarfDebugLocTableFragment(
   unsigned AddressSize = Unit.getOrigUnit().getAddressByteSize();
 
   // Emit ranges.
-  uint64_t BaseAddress = 0;
-  if (std::optional<uint64_t> LowPC = Unit.getLowPc())
-    BaseAddress = *LowPC;
+  uint64_t BaseAddress = Unit.getLowPc().value_or(0);
+  const DIE *CUDie = Unit.getOutputUnitDIE();
+  if (!CUDie || !CUDie->findAttribute(dwarf::DW_AT_low_pc)) {
+    // A computed minimum live PC is not an implicit list base. Declare it
+    // explicitly when the CU has no DW_AT_low_pc (common in assembler DWARF).
+    MS->emitIntValue(dwarf::computeTombstoneAddress(AddressSize), AddressSize);
+    MS->emitIntValue(BaseAddress, AddressSize);
+    LocSectionSize += 2 * AddressSize;
+  }
 
   for (const DWARFLocationExpression &LocExpression :
        LinkedLocationExpression) {
