@@ -503,11 +503,25 @@ bool XtensaAsmParser::matchAndEmitInstruction(SMLoc IDLoc, unsigned &Opcode,
   switch (Result) {
   default:
     break;
-  case Match_Success:
+  case Match_Success: {
+    // Different explicit outputs cannot write the same register. Tied inputs
+    // follow the definitions and may legitimately reuse an output register.
+    unsigned NumDefs = MII.get(Inst.getOpcode()).getNumDefs();
+    for (unsigned I = 0; I < NumDefs; ++I) {
+      const MCOperand &Def = Inst.getOperand(I);
+      if (!Def.isReg() || !Def.getReg())
+        continue;
+      for (unsigned J = 0; J < I; ++J) {
+        const MCOperand &OtherDef = Inst.getOperand(J);
+        if (OtherDef.isReg() && Def.getReg() == OtherDef.getReg())
+          return Error(IDLoc, "multiple writes to the same register");
+      }
+    }
     processInstruction(Inst, IDLoc, Out, STI);
     Inst.setLoc(IDLoc);
     Out.emitInstruction(Inst, getSTI());
     return false;
+  }
   case Match_MissingFeature:
     return Error(IDLoc, "instruction use requires an option to be enabled");
   case Match_MnemonicFail:

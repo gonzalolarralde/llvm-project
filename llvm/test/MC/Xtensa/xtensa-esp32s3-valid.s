@@ -87,9 +87,9 @@ ee.fft.vst.r32.decp q3, a14, 0
 # CHECK: encoding: [0xdf,0x84,0x0a,0x81]
 ee.ldf.128.ip f3, f5, f8, f0, a13, 64
 
-# CHECK-INST:  ee.ldf.128.xp  f5, f2, f4, f4, a7, a8
-# CHECK: encoding: [0x7e,0x48,0x49,0x8a]
-ee.ldf.128.xp f5, f2, f4, f4, a7, a8
+# CHECK-INST:  ee.ldf.128.xp f5, f2, f4, f0, a7, a8
+# CHECK: encoding: [0x7e,0x48,0x09,0x8a]
+ee.ldf.128.xp f5, f2, f4, f0, a7, a8
 
 # CHECK-INST:  ee.ldf.64.ip  f6, f5, a1, 488
 # CHECK: encoding: [0x1e,0x65,0x5f,0xe0]
@@ -207,9 +207,9 @@ ee.slci.2q q7, q4, 2
 # CHECK: encoding: [0xb4,0x74,0xb6]
 ee.slcxxp.2q q6, q7, a11, a4
 
-# CHECK-INST:  ee.srci.2q  q6, q6, 14
-# CHECK: encoding: [0xe4,0x6a,0xfc]
-ee.srci.2q q6, q6, 14
+# CHECK-INST:  ee.srci.2q q6, q5, 14
+# CHECK: encoding: [0xe4,0x5a,0xfc]
+ee.srci.2q q6, q5, 14
 
 # CHECK-INST:  ee.srcmb.s16.qacc  q3, a7, 0
 # CHECK: encoding: [0x74,0xf2,0xdd]
@@ -399,9 +399,9 @@ ee.vldbc.8.ip q3, a3, 103
 # CHECK: encoding: [0x04,0x5d,0x9d]
 ee.vldbc.8.xp q2, a0, a13
 
-# CHECK-INST:  ee.vldhbc.16.incp  q5, q5, a14
-# CHECK: encoding: [0xe4,0xd2,0xec]
-ee.vldhbc.16.incp q5, q5, a14
+# CHECK-INST:  ee.vldhbc.16.incp q5, q4, a14
+# CHECK: encoding: [0xe4,0xc2,0xec]
+ee.vldhbc.16.incp q5, q4, a14
 
 # CHECK-INST:  ee.vld.128.ip  q3, a14, 1248
 # CHECK: encoding: [0xe4,0xce,0x93]
@@ -443,9 +443,9 @@ ee.vmax.s16.st.incp q5, a10, q6, q6, q7
 # CHECK: encoding: [0x34,0xfa,0x9e]
 ee.vmax.s32 q3, q2, q7
 
-# CHECK-INST:  ee.vmax.s32.ld.incp  q1, a3, q1, q1, q0
-# CHECK: encoding: [0x3e,0x4e,0x19,0xe0]
-ee.vmax.s32.ld.incp q1, a3, q1, q1, q0
+# CHECK-INST:  ee.vmax.s32.ld.incp q2, a3, q1, q1, q0
+# CHECK: encoding: [0x3e,0x4e,0x11,0xe1]
+ee.vmax.s32.ld.incp q2, a3, q1, q1, q0
 
 # CHECK-INST:  ee.vmax.s32.st.incp  q3, a12, q4, q6, q3
 # CHECK: encoding: [0xcf,0x90,0xb4,0xe5]
@@ -611,9 +611,9 @@ ee.vmulas.u16.accx.ld.ip.qup q1, a0, 48, q7, q4, q4, q0
 # CHECK: encoding: [0xef,0x64,0x1c,0xf1]
 ee.vmulas.u16.accx.ld.xp q3, a14, a4, q5, q4
 
-# CHECK-INST:  ee.vmulas.u16.accx.ld.xp.qup  q4, a3, a7, q6, q2, q4, q4
-# CHECK: encoding: [0x3f,0x97,0x44,0xc2]
-ee.vmulas.u16.accx.ld.xp.qup q4, a3, a7, q6, q2, q4, q4
+# CHECK-INST:  ee.vmulas.u16.accx.ld.xp.qup q5, a3, a7, q6, q2, q4, q4
+# CHECK: encoding: [0x3f,0x97,0x4c,0xc2]
+ee.vmulas.u16.accx.ld.xp.qup q5, a3, a7, q6, q2, q4, q4
 
 # CHECK-INST:  ee.vmulas.u16.qacc  q5, q5
 # CHECK: encoding: [0x84,0x6d,0x0a]
@@ -631,9 +631,9 @@ ee.vmulas.u16.qacc.ldbc.incp.qup q0, a12, q6, q3, q2, q0
 # CHECK: encoding: [0xae,0xd1,0x05,0xf2]
 ee.vmulas.u16.qacc.ld.ip q4, a10, 16, q3, q2
 
-# CHECK-INST:  ee.vmulas.u16.qacc.ld.ip.qup  q2, a4, 0, q5, q4, q2, q6
-# CHECK: encoding: [0x4f,0x60,0x26,0x51]
-ee.vmulas.u16.qacc.ld.ip.qup q2, a4, 0, q5, q4, q2, q6
+# CHECK-INST:  ee.vmulas.u16.qacc.ld.ip.qup q1, a4, 0, q5, q4, q2, q6
+# CHECK: encoding: [0x4f,0x60,0x2e,0x50]
+ee.vmulas.u16.qacc.ld.ip.qup q1, a4, 0, q5, q4, q2, q6
 
 # CHECK-INST:  ee.vmulas.u16.qacc.ld.xp  q6, a14, a2, q4, q0
 # CHECK: encoding: [0xef,0x02,0x15,0xf3]
@@ -651,9 +651,9 @@ ee.vmulas.u8.accx q2, q1
 # CHECK: encoding: [0x3e,0xb9,0x86,0xff]
 ee.vmulas.u8.accx.ld.ip q6, a3, -112, q2, q7
 
-# CHECK-INST:  ee.vmulas.u8.accx.ld.ip.qup  q7, a3, -32, q3, q3, q7, q5
-# CHECK: encoding: [0x3e,0xde,0xfd,0x6f]
-ee.vmulas.u8.accx.ld.ip.qup q7, a3, -32, q3, q3, q7, q5
+# CHECK-INST:  ee.vmulas.u8.accx.ld.ip.qup q6, a3, -32, q3, q3, q7, q5
+# CHECK: encoding: [0x3e,0xde,0xf5,0x6f]
+ee.vmulas.u8.accx.ld.ip.qup q6, a3, -32, q3, q3, q7, q5
 
 # CHECK-INST:  ee.vmulas.u8.accx.ld.xp  q4, a4, a9, q4, q0
 # CHECK: encoding: [0x4f,0x09,0x16,0xf2]
@@ -687,9 +687,9 @@ ee.vmulas.u8.qacc.ld.ip.qup q0, a6, 48, q0, q0, q6, q0
 # CHECK: encoding: [0x1e,0xa1,0x97,0xf3]
 ee.vmulas.u8.qacc.ld.xp q6, a1, a1, q2, q5
 
-# CHECK-INST:  ee.vmulas.u8.qacc.ld.xp.qup  q1, a8, a10, q3, q7, q1, q3
-# CHECK: encoding: [0x8e,0xfa,0x9b,0xcc]
-ee.vmulas.u8.qacc.ld.xp.qup q1, a8, a10, q3, q7, q1, q3
+# CHECK-INST:  ee.vmulas.u8.qacc.ld.xp.qup q0, a8, a10, q3, q7, q1, q3
+# CHECK: encoding: [0x8e,0xfa,0x93,0xcc]
+ee.vmulas.u8.qacc.ld.xp.qup q0, a8, a10, q3, q7, q1, q3
 
 # CHECK-INST:  ee.vmul.s16  q0, q4, q1
 # CHECK: encoding: [0x84,0x2c,0x8e]
@@ -819,9 +819,9 @@ ee.vsubs.s16.st.incp q7, a13, q7, q5, q2
 # CHECK: encoding: [0xe4,0x77,0x9e]
 ee.vsubs.s32 q2, q7, q6
 
-# CHECK-INST:  ee.vsubs.s32.ld.incp  q1, a8, q1, q4, q0
-# CHECK: encoding: [0x8f,0x0d,0x59,0xe0]
-ee.vsubs.s32.ld.incp q1, a8, q1, q4, q0
+# CHECK-INST:  ee.vsubs.s32.ld.incp q2, a8, q1, q4, q0
+# CHECK: encoding: [0x8f,0x0d,0x51,0xe1]
+ee.vsubs.s32.ld.incp q2, a8, q1, q4, q0
 
 # CHECK-INST:  ee.vsubs.s32.st.incp  q1, a5, q7, q4, q0
 # CHECK: encoding: [0x5f,0x02,0x1f,0xe8]
