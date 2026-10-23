@@ -1,5 +1,9 @@
-; RUN: llc -mtriple=xtensa-esp32s3-none-elf -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
 ; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
 
 ; Instrumented entries cannot use the ENTRY-skipping sibling sequence.
 ; Check assembly only: patchable-function object emission is not supported

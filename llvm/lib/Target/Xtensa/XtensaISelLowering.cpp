@@ -31,6 +31,7 @@
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/MathExtras.h"
 #include "llvm/Support/raw_ostream.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 #include <deque>
 
 using namespace llvm;
@@ -749,7 +750,7 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
   const auto *CalleeFn = GA ? dyn_cast<Function>(GA->getGlobal()) : nullptr;
   if (IsTailCall) {
     IsTailCall = Subtarget.isWindowedABI() &&
-                 Subtarget.getTargetTriple().getVendorName() == "esp32s3" &&
+                 !Xtensa::getCPUForTriple(Subtarget.getTargetTriple()).empty() &&
                  CalleeFn && !CalleeFn->isDeclarationForLinker() &&
                  !CalleeFn->isInterposable() && !GA->getOffset() &&
                  !CalleeFn->hasFnAttribute(Attribute::Naked) &&
@@ -783,7 +784,7 @@ XtensaTargetLowering::LowerCall(CallLoweringInfo &CLI,
   }
   if (!IsTailCall && CLI.CB && CLI.CB->isMustTailCall())
     DAG.getContext()->diagnose(DiagnosticInfoUnsupported(
-        Caller, "Xtensa musttail requires a direct, non-replaceable ESP32-S3 "
+        Caller, "Xtensa musttail requires a direct, non-replaceable ESP32-family "
                 "windowed definition, matching non-variadic C/Swift convention, "
                 "no sret/nest/inalloca, at most 256 byval bytes, and enough "
                 "incoming stack argument space", DL.getDebugLoc()));

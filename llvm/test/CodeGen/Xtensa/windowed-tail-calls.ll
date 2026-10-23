@@ -1,7 +1,21 @@
-; RUN: llc -mtriple=xtensa-esp32s3-none-elf -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O0 -filetype=obj -verify-machineinstrs < %s -o %t.esp32.O0.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32.O0.o | FileCheck %s --check-prefix=CFI
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32-none-elf -O2 -filetype=obj -verify-machineinstrs < %s -o %t.esp32.O2.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32.O2.o | FileCheck %s --check-prefix=CFI
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O0 -filetype=obj -verify-machineinstrs < %s -o %t.esp32s2.O0.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32s2.O0.o | FileCheck %s --check-prefix=CFI
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -O2 -filetype=obj -verify-machineinstrs < %s -o %t.esp32s2.O2.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32s2.O2.o | FileCheck %s --check-prefix=CFI
 ; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O0 -verify-machineinstrs < %s | FileCheck %s
-; RUN: llc -mtriple=xtensa-esp32s3-none-elf -filetype=obj -verify-machineinstrs < %s -o %t.o
-; RUN: llvm-dwarfdump --eh-frame %t.o | FileCheck %s --check-prefix=CFI
+; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O0 -filetype=obj -verify-machineinstrs < %s -o %t.esp32s3.O0.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32s3.O0.o | FileCheck %s --check-prefix=CFI
+; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O2 -verify-machineinstrs < %s | FileCheck %s
+; RUN: llc -mtriple=xtensa-esp32s3-none-elf -O2 -filetype=obj -verify-machineinstrs < %s -o %t.esp32s3.O2.o
+; RUN: llvm-dwarfdump --eh-frame %t.esp32s3.O2.o | FileCheck %s --check-prefix=CFI
 
 ; Reuse the original window and its return address. The target's ENTRY size
 ; is decoded, but ENTRY's window rotation is not executed a second time.

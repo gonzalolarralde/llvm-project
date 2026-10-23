@@ -1,9 +1,27 @@
 ; RUN: split-file %s %t
-; RUN: not llc -mtriple=xtensa-esp32s3-none-elf %t/external.ll -o /dev/null 2>&1 | FileCheck %s
-; RUN: not llc -mtriple=xtensa-esp32s3-none-elf %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
-; RUN: not llc -mtriple=xtensa-esp32s3-none-elf %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
-; RUN: not llc -mtriple=xtensa-none-elf -mattr=-windowed %t/call0.ll -o /dev/null 2>&1 | FileCheck %s
-; CHECK: error: {{.*}}Xtensa musttail requires
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O0 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O0 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O0 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O2 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O2 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32-none-elf -O2 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O0 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O0 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O0 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O2 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O2 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s2-none-elf -O2 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O0 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O0 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O0 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O2 %t/external.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O2 %t/indirect.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-esp32s3-none-elf -O2 %t/large-byval.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-none-elf -mattr=-windowed -O0 %t/call0.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-unknown-none-elf -mcpu=esp32 -O0 %t/call0.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-none-elf -mattr=-windowed -O2 %t/call0.ll -o /dev/null 2>&1 | FileCheck %s
+; RUN: not llc -mtriple=xtensa-unknown-none-elf -mcpu=esp32 -O2 %t/call0.ll -o /dev/null 2>&1 | FileCheck %s
+; CHECK: error: {{.*}}Xtensa musttail requires a direct, non-replaceable ESP32-family windowed definition
 ; CHECK-NOT: LLVM ERROR
 ; CHECK-NOT: Stack dump
 
