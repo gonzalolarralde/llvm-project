@@ -1214,34 +1214,69 @@ void CompileUnit::cloneDieAttrExpression(
   DWARFUnit &OrigUnit = getOrigUnit();
   uint8_t OrigAddressByteSize = OrigUnit.getAddressByteSize();
 
-  uint64_t OpOffset = 0;
-  for (auto &Op : InputExpression) {
+  DenseMap<uint64_t, uint64_t> OffsetMap;
+  struct BranchFixup {
+    uint64_t OperandOffset;
+    int64_t Target;
+  };
+  SmallVector<BranchFixup> Branches;
+  auto Fail = [&](StringRef Message) {
+    HadExpressionError = true;
+    warn(Message);
+  };
+  for (auto It = InputExpression.begin(); It != InputExpression.end();) {
+    const auto &Op = *It;
+    uint64_t OpOffset = It.getOffset();
+    OffsetMap[OpOffset] = OutputExpression.size();
+    if (Op.isError()) {
+      Fail("cannot rewrite an invalid DWARF expression.");
+      return;
+    }
+    if (Op.getCode() == dwarf::DW_OP_entry_value ||
+        Op.getCode() == dwarf::DW_OP_GNU_entry_value) {
+      uint64_t Size = Op.getRawOperand(0);
+      if (Size > InputExpression.getData().size() - Op.getEndOffset()) {
+        Fail("entry-value expression extends past its block.");
+        return;
+      }
+      DataExtractor NestedData(
+          InputExpression.getData().substr(Op.getEndOffset(), Size),
+          OrigUnit.isLittleEndian());
+      DWARFExpression NestedExpression(NestedData, OrigAddressByteSize,
+                                       OrigUnit.getFormat());
+      SmallVector<uint8_t> NestedOutput;
+      OffsetsPtrVector NestedPatches;
+      cloneDieAttrExpression(NestedExpression, NestedOutput, Section,
+                            VarAddressAdjustment, NestedPatches);
+      if (HadExpressionError)
+        return;
+      OutputExpression.push_back(Op.getCode());
+      uint8_t Length[10];
+      unsigned LengthSize = encodeULEB128(NestedOutput.size(), Length);
+      OutputExpression.append(Length, Length + LengthSize);
+      for (uint64_t *Patch : NestedPatches) {
+        *Patch += OutputExpression.size();
+        PatchesOffsets.push_back(Patch);
+      }
+      OutputExpression.append(NestedOutput);
+      It = It.skipBytes(Size);
+      continue;
+    }
     auto Desc = Op.getDescription();
-    // DW_OP_const_type is variable-length and has 3
-    // operands. Thus far we only support 2.
-    if ((Desc.Op.size() == 2 && Desc.Op[0] == Encoding::BaseTypeRef) ||
-        (Desc.Op.size() == 2 && Desc.Op[1] == Encoding::BaseTypeRef &&
-         Desc.Op[0] != Encoding::Size1))
-      warn("unsupported DW_OP encoding.");
-
-    if ((Desc.Op.size() == 1 && Desc.Op[0] == Encoding::BaseTypeRef) ||
-        (Desc.Op.size() == 2 && Desc.Op[1] == Encoding::BaseTypeRef &&
-         Desc.Op[0] == Encoding::Size1)) {
-      // This code assumes that the other non-typeref operand fits into 1 byte.
-      assert(OpOffset < Op.getEndOffset());
-      uint32_t ULEBsize = Op.getEndOffset() - OpOffset - 1;
+    auto TypeOperand = llvm::find(Desc.Op, Encoding::BaseTypeRef);
+    if (TypeOperand != Desc.Op.end()) {
+      unsigned Operand = unsigned(TypeOperand - Desc.Op.begin());
+      uint64_t RefBegin = Operand ? Op.getOperandEndOffset(Operand - 1)
+                                 : OpOffset + 1;
+      uint64_t RefEnd = Op.getOperandEndOffset(Operand);
+      uint32_t ULEBsize = RefEnd - RefBegin;
       assert(ULEBsize <= 16);
 
-      // Copy over the operation.
-      assert(!Op.getSubCode() && "SubOps not yet supported");
-      OutputExpression.push_back(Op.getCode());
-      uint64_t RefOffset;
-      if (Desc.Op.size() == 1) {
-        RefOffset = Op.getRawOperand(0);
-      } else {
-        OutputExpression.push_back(Op.getRawOperand(0));
-        RefOffset = Op.getRawOperand(1);
-      }
+      // Copy the opcode and any preceding operands exactly, including a
+      // multi-byte register number. Only the type-reference byte span changes.
+      StringRef Prefix = InputExpression.getData().slice(OpOffset, RefBegin);
+      OutputExpression.append(Prefix.begin(), Prefix.end());
+      uint64_t RefOffset = Op.getRawOperand(Operand);
       uint8_t ULEB[16];
       uint32_t Offset = 0;
       unsigned RealSize = 0;
@@ -1250,11 +1285,20 @@ void CompileUnit::cloneDieAttrExpression(
       // DW_OP_reinterpret, which is currently not supported.
       if (RefOffset > 0 || (Op.getCode() != dwarf::DW_OP_convert &&
                             Op.getCode() != dwarf::DW_OP_GNU_convert)) {
+        if (RefOffset >= OrigUnit.getNextUnitOffset() - OrigUnit.getOffset()) {
+          Fail("expression type reference is outside its compile unit.");
+          return;
+        }
         RefOffset += OrigUnit.getOffset();
-        uint32_t RefDieIdx = 0;
-        if (std::optional<uint32_t> Idx =
-                OrigUnit.getDIEIndexForOffset(RefOffset))
-          RefDieIdx = *Idx;
+        std::optional<uint32_t> RefDieIdx =
+            OrigUnit.getDIEIndexForOffset(RefOffset);
+        if (!RefDieIdx ||
+            OrigUnit.getDIEAtIndex(*RefDieIdx).getTag() !=
+                dwarf::DW_TAG_base_type ||
+            !getDIEInfo(*RefDieIdx).needToKeepInPlainDwarf()) {
+          Fail("expression type reference does not point to a retained base type.");
+          return;
+        }
 
         // Use fixed size for ULEB128 data, since we need to update that size
         // later with the proper offsets. Use 5 for DWARF32, 9 for DWARF64.
@@ -1264,7 +1308,7 @@ void CompileUnit::cloneDieAttrExpression(
 
         Section.notePatchWithOffsetUpdate(
             DebugULEB128DieRefPatch(OutputExpression.size(), this, this,
-                                    RefDieIdx),
+                                    *RefDieIdx),
             PatchesOffsets);
       } else
         RealSize = encodeULEB128(Offset, ULEB, ULEBsize);
@@ -1277,6 +1321,11 @@ void CompileUnit::cloneDieAttrExpression(
       assert(RealSize == ULEBsize && "padding failed");
       ArrayRef<uint8_t> ULEBbytes(ULEB, ULEBsize);
       OutputExpression.append(ULEBbytes.begin(), ULEBbytes.end());
+      // In particular, preserve const_type's size byte and opaque constant
+      // block; payload bytes must not be interpreted as expression opcodes.
+      StringRef Suffix =
+          InputExpression.getData().slice(RefEnd, Op.getEndOffset());
+      OutputExpression.append(Suffix.begin(), Suffix.end());
     } else if (!getGlobalData().getOptions().UpdateIndexTablesOnly &&
                Op.getCode() == dwarf::DW_OP_addrx) {
       if (std::optional<object::SectionedAddress> SA =
@@ -1345,8 +1394,34 @@ void CompileUnit::cloneDieAttrExpression(
       StringRef Bytes =
           InputExpression.getData().slice(OpOffset, Op.getEndOffset());
       OutputExpression.append(Bytes.begin(), Bytes.end());
+      if (Op.getCode() == dwarf::DW_OP_bra || Op.getCode() == dwarf::DW_OP_skip)
+        Branches.push_back(
+            {OutputExpression.size() - 2,
+             int64_t(Op.getEndOffset()) + int16_t(Op.getRawOperand(0))});
     }
-    OpOffset = Op.getEndOffset();
+    ++It;
+  }
+  OffsetMap[InputExpression.getData().size()] = OutputExpression.size();
+  for (auto Branch : Branches) {
+    if (Branch.Target < 0) {
+      Fail("expression branch does not target an operation boundary.");
+      continue;
+    }
+    auto Target = OffsetMap.find(Branch.Target);
+    if (Target == OffsetMap.end()) {
+      Fail("expression branch does not target an operation boundary.");
+      continue;
+    }
+    int64_t Displacement =
+        int64_t(Target->second) - int64_t(Branch.OperandOffset + 2);
+    if (!isInt<16>(Displacement)) {
+      Fail("rewritten expression branch displacement does not fit.");
+      continue;
+    }
+    for (unsigned I = 0; I != 2; ++I)
+      OutputExpression[Branch.OperandOffset + I] =
+          uint16_t(Displacement) >>
+          (8 * (OrigUnit.isLittleEndian() ? I : 1 - I));
   }
 }
 
@@ -1354,6 +1429,7 @@ Error CompileUnit::cloneAndEmit(
     std::optional<std::reference_wrapper<const Triple>> TargetTriple,
     TypeUnit *ArtificialTypeUnit) {
   BumpPtrAllocator Allocator;
+  HadExpressionError = false;
 
   DWARFDie OrigUnitDIE = getOrigUnit().getUnitDIE();
   if (!OrigUnitDIE.isValid())
@@ -1368,6 +1444,8 @@ Error CompileUnit::cloneAndEmit(
       OrigUnitDIE.getDebugInfoEntry(), RootEntry, getDebugInfoHeaderSize(),
       std::nullopt, std::nullopt, Allocator, ArtificialTypeUnit);
   setOutUnitDIE(OutCUDie.first);
+  if (HadExpressionError)
+    return createStringError("could not preserve DWARF expression references");
 
   if (!TargetTriple.has_value() || (OutCUDie.first == nullptr))
     return Error::success();
@@ -1391,6 +1469,8 @@ Error CompileUnit::cloneAndEmit(
 
   if (Error Err = cloneAndEmitDebugLocations())
     return Err;
+  if (HadExpressionError)
+    return createStringError("could not preserve DWARF expression references");
 
   if (Error Err = emitDebugAddrSection())
     return Err;

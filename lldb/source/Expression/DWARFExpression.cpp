@@ -439,6 +439,7 @@ GetOpcodeDataSize(const DataExtractor &data, const lldb::offset_t data_offset,
   }
 
   case DW_OP_const_type: // 0xa4 ULEB128 + size + variable-length block
+  case DW_OP_GNU_const_type:
   {
     data.Skip_LEB128(&offset);
     uint8_t length = data.GetU8(&offset);

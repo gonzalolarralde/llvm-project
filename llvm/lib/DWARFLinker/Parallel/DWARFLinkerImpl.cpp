@@ -207,6 +207,18 @@ Error DWARFLinkerImpl::link() {
       });
   }
 
+  // Ordinary malformed units may be skipped, but dropping a unit after failing
+  // to relocate its expressions would silently discard live debug information.
+  // All worker groups have joined before examining the per-unit failure flags.
+  for (const std::unique_ptr<LinkContext> &Context : ObjectContexts) {
+    auto HasExpressionError = [](const std::unique_ptr<CompileUnit> &CU) {
+      return CU->hasExpressionError();
+    };
+    if (llvm::any_of(Context->CompileUnits, HasExpressionError) ||
+        llvm::any_of(Context->ModulesCompileUnits, HasExpressionError))
+      return createStringError("could not preserve DWARF expression references");
+  }
+
   // Merge staged parseable Swift interface entries into the shared map. Done
   // serially so that the final map contents and any conflict warnings are
   // deterministic.

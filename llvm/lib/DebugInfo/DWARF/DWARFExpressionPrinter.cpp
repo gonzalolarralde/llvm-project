@@ -222,8 +222,7 @@ static bool printOp(const DWARFExpression::Operation *Op, raw_ostream &OS,
 
 void printDwarfExpression(const DWARFExpression *E, raw_ostream &OS,
                           DIDumpOptions DumpOpts, DWARFUnit *U, bool IsEH) {
-  uint32_t EntryValExprSize = 0;
-  uint64_t EntryValStartOffset = 0;
+  SmallVector<uint64_t> EntryValueEnds;
   if (E->getData().empty())
     OS << "<empty>";
 
@@ -240,15 +239,15 @@ void printDwarfExpression(const DWARFExpression *E, raw_ostream &OS,
       if (Op.getCode() == DW_OP_entry_value ||
           Op.getCode() == DW_OP_GNU_entry_value) {
         OS << "(";
-        EntryValExprSize = Op.getRawOperand(0);
-        EntryValStartOffset = Op.getEndOffset();
-        continue;
+        EntryValueEnds.push_back(Op.getEndOffset() + Op.getRawOperand(0));
+        if (Op.getRawOperand(0))
+          continue;
       }
 
-      if (EntryValExprSize) {
-        EntryValExprSize -= Op.getEndOffset() - EntryValStartOffset;
-        if (EntryValExprSize == 0)
-          OS << ")";
+      while (!EntryValueEnds.empty() &&
+             EntryValueEnds.back() == Op.getEndOffset()) {
+        OS << ")";
+        EntryValueEnds.pop_back();
       }
 
       if (Op.getEndOffset() < E->getData().size())

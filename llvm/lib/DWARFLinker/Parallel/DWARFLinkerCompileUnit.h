@@ -503,6 +503,9 @@ public:
                               std::optional<int64_t> VarAddressAdjustment,
                               OffsetsPtrVector &PatchesOffsets);
 
+  /// Returns whether cloning encountered an expression it could not preserve.
+  bool hasExpressionError() const { return HadExpressionError; }
+
   /// Returns index(inside .debug_addr) of an address.
   uint64_t getDebugAddrIndex(uint64_t Addr) {
     return DebugAddrIndexMap.getValueIndex(Addr);
@@ -671,6 +674,9 @@ public:
   };
 
 private:
+  /// A malformed expression must fail linking instead of emitting stale offsets.
+  bool HadExpressionError = false;
+
   /// Navigate DWARF tree recursively and set die properties.
   void analyzeDWARFStructureRec(const DWARFDebugInfoEntry *DieEntry,
                                 bool IsODRUnavailableFunctionScope);

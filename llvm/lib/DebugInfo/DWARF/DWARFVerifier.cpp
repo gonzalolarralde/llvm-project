@@ -679,6 +679,10 @@ bool DWARFVerifier::verifyExpressionOp(const DWARFExpression::Operation &Op,
       if ((Op.Opcode == DW_OP_convert || Op.Opcode == DW_OP_GNU_convert) &&
           Op.Operands[Operand] == 0)
         continue;
+      // Check the CU-relative offset before adding the section offset. Besides
+      // rejecting references outside this unit, this prevents integer wraparound.
+      if (Op.Operands[Operand] >= U->getNextUnitOffset() - U->getOffset())
+        return false;
       auto Die = U->getDIEForOffset(U->getOffset() + Op.Operands[Operand]);
       if (!Die || Die.getTag() != dwarf::DW_TAG_base_type)
         return false;

@@ -1373,15 +1373,28 @@ void DWARFLinker::DIECloner::cloneExpression(
       StringRef Prefix = Data.getData().slice(OpOffset, RefStart);
       OutputBuffer.append(Prefix.begin(), Prefix.end());
       uint64_t RefOffset = Op.getRawOperand(Ref->Operand);
-      if (!Ref->IsAbsolute)
+      if (!Ref->IsAbsolute) {
+        if (RefOffset >= Unit.getOrigUnit().getNextUnitOffset() -
+                             Unit.getOrigUnit().getOffset()) {
+          Fail("expression reference is outside its compile unit.");
+          return;
+        }
         RefOffset += Unit.getOrigUnit().getOffset();
+      }
       CompileUnit *RefCU =
           Ref->IsAbsolute ? getUnitForOffset(CompileUnits, RefOffset) : &Unit;
       uint64_t Offset = 0;
       DIE *Clone = nullptr;
       if (RefCU)
-        if (auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset))
+        if (auto RefDie = RefCU->getOrigUnit().getDIEForOffset(RefOffset)) {
+          if (Op.getDescription().Op[Ref->Operand] ==
+                  DWARFExpression::Operation::BaseTypeRef &&
+              RefDie.getTag() != dwarf::DW_TAG_base_type) {
+            Fail("expression type reference does not point to a base type.");
+            return;
+          }
           Clone = RefCU->getInfo(RefDie).Clone;
+        }
       if (Clone && AllDIEsCloned)
         Offset = Clone->getOffset() +
                  (Ref->IsAbsolute ? RefCU->getStartOffset() : 0);
@@ -1478,6 +1491,10 @@ void DWARFLinker::DIECloner::cloneExpression(
   }
   OffsetMap[Data.getData().size()] = OutputBuffer.size();
   for (auto Branch : Branches) {
+    if (Branch.Target < 0) {
+      Fail("expression branch does not target an operation boundary.");
+      continue;
+    }
     auto Target = OffsetMap.find(Branch.Target);
     if (Target == OffsetMap.end()) {
       Fail("expression branch does not target an operation boundary.");

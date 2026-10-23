@@ -1094,6 +1094,25 @@ TEST(DWARFExpression, DW_OP_const_type_unhandled) {
           "unhandled opcode DW_OP_const_type in DWARFExpression"));
 }
 
+TEST(DWARFExpression, TypedConstantOpcodeSize) {
+  for (uint8_t Opcode : {DW_OP_const_type, DW_OP_GNU_const_type}) {
+    // The payload's DW_OP_addr byte is opaque; find only the following address.
+    const uint8_t Expr[] = {Opcode, 0xa5, 0x02, 5, DW_OP_addr, 0xff, 0xff,
+                            0xff, 0xff, DW_OP_addr, 0x10, 0x20, 0x30, 0x40};
+    DataExtractor Extractor(Expr, sizeof(Expr), lldb::eByteOrderLittle, 4);
+    DWARFExpression Expression(Extractor);
+    EXPECT_THAT_EXPECTED(Expression.GetLocation_DW_OP_addr(nullptr),
+                         llvm::HasValue(0x40302010u));
+  }
+}
+
+TEST(DWARFExpression, DW_OP_GNU_const_type_unhandled) {
+  EXPECT_THAT_EXPECTED(
+      Evaluate({DW_OP_GNU_const_type, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00}),
+      llvm::FailedWithMessage(
+          "unhandled opcode DW_OP_GNU_const_type in DWARFExpression"));
+}
+
 TEST(DWARFExpression, DW_OP_regval_type_unhandled) {
   EXPECT_THAT_EXPECTED(
       Evaluate({DW_OP_regval_type, 0x00, 0x00}),
