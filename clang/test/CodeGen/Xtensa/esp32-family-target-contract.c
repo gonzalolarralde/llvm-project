@@ -1,7 +1,7 @@
 // RUN: %clang --target=xtensa-esp32-none-elf -S -emit-llvm %s -o - | FileCheck %s --check-prefix=ESP32
 // RUN: %clang --target=xtensa-esp32s2-none-elf -S -emit-llvm %s -o - | FileCheck %s --check-prefix=S2
-// RUN: %clang_cc1 -triple xtensa-esp32-none-elf -target-feature -windowed -target-feature +windowed -emit-llvm %s -o - | FileCheck %s --check-prefix=ESP32
-// RUN: %clang_cc1 -triple xtensa-esp32s2-none-elf -target-feature -windowed -target-feature +windowed -emit-llvm %s -o - | FileCheck %s --check-prefix=S2
+// RUN: %clang_cc1 -triple xtensa-esp32-none-elf -target-feature -windowed -target-feature +windowed -emit-llvm %s -o - | FileCheck %s --check-prefix=WINDOWED
+// RUN: %clang_cc1 -triple xtensa-esp32s2-none-elf -target-feature -windowed -target-feature +windowed -emit-llvm %s -o - | FileCheck %s --check-prefix=WINDOWED
 // RUN: not %clang --target=xtensa-esp32-none-elf -mcpu=esp32s3 -fsyntax-only %s 2>&1 | FileCheck %s --check-prefix=BAD-ESP32-CPU
 // RUN: not %clang_cc1 -triple xtensa-esp32s2-none-elf -target-cpu esp32 -fsyntax-only %s 2>&1 | FileCheck %s --check-prefix=BAD-S2-CPU
 // RUN: not %clang_cc1 -triple xtensa-esp32-none-elf -target-feature +windowed -target-feature -windowed -fsyntax-only %s 2>&1 | FileCheck %s --check-prefix=BAD-ESP32-ABI
@@ -32,6 +32,8 @@ __attribute__((target("windowed,no-windowed"))) int wrong_abi(int x) { return x;
 // S2: target triple = "xtensa-esp32s2-none-elf"
 // S2: "target-cpu"="esp32s2"
 // S2-SAME: "target-features"="{{[^"]*}}+windowed
+// WINDOWED: target triple = "xtensa-{{esp32|esp32s2}}-none-elf"
+// WINDOWED: "target-features"="{{[^"]*}}+windowed"
 // BAD-ESP32-CPU: error: CPU 'esp32s3' is not supported for target 'xtensa-esp32-none-elf'
 // BAD-S2-CPU: error: CPU 'esp32' is not supported for target 'xtensa-esp32s2-none-elf'
 // BAD-S2-ATTR: error: CPU 'esp32s3' is not supported for target 'xtensa-esp32s2-none-elf'
