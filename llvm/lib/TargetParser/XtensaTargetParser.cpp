@@ -12,6 +12,7 @@
 
 #include "llvm/TargetParser/XtensaTargetParser.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringSwitch.h"
 #include <vector>
 
@@ -41,6 +42,16 @@ constexpr CPUInfo XtensaCPUInfo[] = {
 #define XTENSA_CPU(ENUM, NAME, FEATURES) {NAME, CK_##ENUM, FEATURES},
 #include "llvm/TargetParser/XtensaTargetParser.def"
 };
+
+StringRef getCPUForTriple(const Triple &TT) {
+  if (TT.getArch() != Triple::xtensa)
+    return {};
+  return StringSwitch<StringRef>(TT.getVendorName())
+      .Case("esp32", "esp32")
+      .Case("esp32s2", "esp32s2")
+      .Case("esp32s3", "esp32s3")
+      .Default("");
+}
 
 StringRef getBaseName(StringRef CPU) {
   return llvm::StringSwitch<StringRef>(CPU)

@@ -21,6 +21,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/PassRegistry.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 #include "llvm/Transforms/Scalar.h"
 #include <optional>
 
@@ -72,17 +73,17 @@ XtensaTargetMachine::getSubtargetImpl(const Function &F) const {
 
   auto &I = SubtargetMap[CPU + FS];
   if (!I) {
-    bool IsS3 = TargetTriple.getVendorName() == "esp32s3";
-    if (IsS3 && !CPU.empty() && CPU != "esp32s3") {
+    StringRef TripleCPU = Xtensa::getCPUForTriple(TargetTriple);
+    if (!TripleCPU.empty() && !CPU.empty() && CPU != TripleCPU) {
       F.getContext().emitError("CPU '" + CPU +
                               "' is not supported for target '" +
                               TargetTriple.str() + "'");
       // Diagnostic handlers may accumulate errors instead of terminating.
       // Keep their remaining pipeline on the target's valid application ABI.
-      CPU = "esp32s3";
+      CPU = TripleCPU.str();
     }
     I = std::make_unique<XtensaSubtarget>(TargetTriple, CPU, FS, *this);
-    if (IsS3 && !I->isWindowedABI()) {
+    if (!TripleCPU.empty() && !I->isWindowedABI()) {
       F.getContext().emitError("ABI 'call0' is not supported for target '" +
                               TargetTriple.str() + "'");
       // Check the parsed subtarget so repeated features retain last-wins

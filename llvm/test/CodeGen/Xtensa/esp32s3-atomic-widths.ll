@@ -1,3 +1,5 @@
+; RUN: llc -mtriple=xtensa-esp32-none-elf -verify-machineinstrs < %s | FileCheck %s --check-prefixes=COMMON,NATIVE
+; RUN: llc -mtriple=xtensa-esp32s2-none-elf -verify-machineinstrs < %s | FileCheck %s --check-prefixes=COMMON,HELPER --implicit-check-not=s32c1i
 ; RUN: llc -mtriple=xtensa-esp32s3-none-elf -verify-machineinstrs < %s | FileCheck %s --check-prefixes=COMMON,NATIVE
 ; RUN: llc -mtriple=xtensa-esp32s3-none-elf -mattr=-s32c1i -verify-machineinstrs < %s | FileCheck %s --check-prefixes=COMMON,HELPER --implicit-check-not=s32c1i
 ;

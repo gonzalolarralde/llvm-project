@@ -61,6 +61,7 @@
 #include "llvm/TargetParser/AMDGPUTargetParser.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/PPCTargetParser.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 #include <optional>
 
 using namespace clang::driver;
@@ -839,9 +840,7 @@ std::string tools::getCPUName(const Driver &D, const ArgList &Args,
   case llvm::Triple::xtensa:
     if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
       return A->getValue();
-    if (T.getVendorName() == "esp32s3")
-      return "esp32s3";
-    return "";
+    return llvm::Xtensa::getCPUForTriple(T).str();
   }
 }
 

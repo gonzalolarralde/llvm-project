@@ -1,3 +1,5 @@
+# RUN: llvm-mc %s -triple=xtensa-esp32s2-none-elf -show-encoding \
+# RUN:     | FileCheck -check-prefixes=CHECK,CHECK-INST %s
 # RUN: llvm-mc %s -triple=xtensa  -mattr=+esp32s2ops -show-encoding \
 # RUN:     | FileCheck -check-prefixes=CHECK,CHECK-INST %s
 

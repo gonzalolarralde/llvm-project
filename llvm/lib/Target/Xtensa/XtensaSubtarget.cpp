@@ -14,6 +14,7 @@
 #include "XtensaSelectionDAGInfo.h"
 #include "llvm/IR/GlobalValue.h"
 #include "llvm/Support/Debug.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 
 #define DEBUG_TYPE "xtensa-subtarget"
 
@@ -27,8 +28,9 @@ XtensaSubtarget &
 XtensaSubtarget::initializeSubtargetDependencies(StringRef CPU, StringRef FS) {
   StringRef CPUName = CPU;
   if (CPUName.empty()) {
-    // set default cpu name
-    CPUName = TargetTriple.getVendorName() == "esp32s3" ? "esp32s3" : "generic";
+    CPUName = Xtensa::getCPUForTriple(TargetTriple);
+    if (CPUName.empty())
+      CPUName = "generic";
   }
 
   // Parse features string.

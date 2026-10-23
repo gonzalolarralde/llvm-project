@@ -21,6 +21,7 @@
 #include "llvm/MC/MCSubtargetInfo.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/TargetParser/XtensaTargetParser.h"
 
 #define GET_INSTRINFO_MC_DESC
 #include "XtensaGenInstrInfo.inc"
@@ -330,8 +331,8 @@ static MCRegisterInfo *createXtensaMCRegisterInfo(const Triple &TT) {
 
 static MCSubtargetInfo *
 createXtensaMCSubtargetInfo(const Triple &TT, StringRef CPU, StringRef FS) {
-  if (CPU.empty() && TT.getVendorName() == "esp32s3")
-    CPU = "esp32s3";
+  if (CPU.empty())
+    CPU = Xtensa::getCPUForTriple(TT);
   return createXtensaMCSubtargetInfoImpl(TT, CPU, CPU, FS);
 }
 

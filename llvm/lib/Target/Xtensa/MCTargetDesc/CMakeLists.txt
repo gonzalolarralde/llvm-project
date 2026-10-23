@@ -10,6 +10,7 @@ add_llvm_component_library(LLVMXtensaDesc
   LINK_COMPONENTS
   MC
   Support
+  TargetParser
   XtensaInfo
 
   ADD_TO_COMPONENT

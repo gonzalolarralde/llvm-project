@@ -23,9 +23,10 @@ using namespace clang::targets;
 bool XtensaTargetInfo::initFeatureMap(
     llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags, StringRef CPU,
     const std::vector<std::string> &FeaturesVec) const {
+  StringRef TripleCPU = llvm::Xtensa::getCPUForTriple(getTriple());
   if (CPU.empty())
-    CPU = getTriple().getVendorName() == "esp32s3" ? "esp32s3" : "generic";
-  if (getTriple().getVendorName() == "esp32s3" && CPU != "esp32s3") {
+    CPU = TripleCPU.empty() ? "generic" : TripleCPU;
+  if (!TripleCPU.empty() && CPU != TripleCPU) {
     Diags.Report(diag::err_target_unsupported_cpu_for_triple)
         << CPU << getTriple().str();
     return false;
@@ -37,12 +38,11 @@ bool XtensaTargetInfo::initFeatureMap(
   if (!TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec))
     return false;
 
-  // The ESP32-S3 triple selects a fixed windowed application ABI. Validate the
+  // Espressif chip triples select a fixed windowed application ABI. Validate the
   // resolved feature map, including per-function attributes, so repeated flags
   // retain their usual last-option-wins behavior. Instruction-only overrides
   // such as -s32c1i remain available without changing the calling convention.
-  if (getTriple().getVendorName() == "esp32s3" &&
-      !Features.lookup("windowed")) {
+  if (!TripleCPU.empty() && !Features.lookup("windowed")) {
     Diags.Report(diag::err_target_unsupported_abi_for_triple)
         << "call0" << getTriple().str();
     return false;

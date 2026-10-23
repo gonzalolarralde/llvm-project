@@ -69,6 +69,9 @@ enum XtensaFeatureKind : uint64_t {
   XF_ESP32S3OPS = 1ULL << 38
 };
 
+/// Return the fixed CPU selected by an Espressif Xtensa triple, or an empty
+/// string when the triple does not select a particular chip.
+LLVM_ABI StringRef getCPUForTriple(const Triple &TT);
 LLVM_ABI CPUKind parseCPUKind(StringRef CPU);
 LLVM_ABI StringRef getBaseName(StringRef CPU);
 LLVM_ABI void getCPUFeatures(StringRef CPU,

@@ -1,5 +1,7 @@
 // RUN: %clang_cc1 -triple xtensa-esp32s3-none-elf -fsyntax-only %s
 // RUN: %clang_cc1 -triple xtensa-esp32s3-none-elf -target-feature -s32c1i -DNO_CAS -fsyntax-only %s
+// RUN: %clang_cc1 -triple xtensa-esp32-none-elf -fsyntax-only %s
+// RUN: %clang_cc1 -triple xtensa-esp32s2-none-elf -DNO_CAS -fsyntax-only %s
 // REQUIRES: xtensa-registered-target
 
 // Disabling native CAS must also remove the frontend's compile-time guarantee
